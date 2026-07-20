@@ -99,6 +99,8 @@ struct RootView: View {
         switch section {
         case .dashboard:
             DashboardView { selection = $0 }
+        case .board:
+            BoardView()
         case .profile:
             ProfileView()
         case .settings:
