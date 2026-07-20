@@ -628,6 +628,104 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertEqual(updated.dueDate, "")
     }
 
+    func testSavedMemoriesCRUDUsesChatMemoriesContract() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            XCTAssertTrue(request.url?.path.hasPrefix("/api/collections/chat_memories/records") == true)
+
+            let response: Data
+            switch request.httpMethod {
+            case "GET":
+                let components = try XCTUnwrap(
+                    URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+                )
+                let query = Dictionary(
+                    uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+                )
+                XCTAssertEqual(request.url?.path, "/api/collections/chat_memories/records")
+                XCTAssertEqual(query["page"], "1")
+                XCTAssertEqual(query["perPage"], "200")
+                XCTAssertEqual(query["sort"], "-updated")
+                XCTAssertNil(query["filter"])
+                response = Data(#"{"page":1,"totalPages":1,"items":[{"id":"memory-1","owner":"user-1","category":"preference","content":"Prefer concise answers.","active":true,"origin":"explicit","source_conversation":"conversation-1","source_message":"message-1","created":"2026-07-20 08:00:00.000Z","updated":"2026-07-20 09:00:00.000Z"}]}"#.utf8)
+
+            case "POST":
+                XCTAssertEqual(request.url?.path, "/api/collections/chat_memories/records")
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: String]
+                )
+                XCTAssertEqual(fields, ["category": "goal", "content": "Ship the app."])
+                response = Data(#"{"id":"memory-2","owner":"user-1","category":"goal","content":"Ship the app.","active":true,"origin":"manual","source_conversation":"","source_message":"","created":"2026-07-20 10:00:00.000Z","updated":"2026-07-20 10:00:00.000Z"}"#.utf8)
+
+            case "PATCH":
+                XCTAssertEqual(request.url?.path, "/api/collections/chat_memories/records/memory-1")
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                if let active = fields["active"] as? Bool {
+                    XCTAssertFalse(active)
+                    XCTAssertEqual(fields.count, 1)
+                    response = Data(#"{"id":"memory-1","owner":"user-1","category":"preference","content":"Prefer concise answers.","active":false,"origin":"explicit","source_conversation":"conversation-1","source_message":"message-1","created":"2026-07-20 08:00:00.000Z","updated":"2026-07-20 11:00:00.000Z"}"#.utf8)
+                } else {
+                    XCTAssertEqual(fields["category"] as? String, "constraint")
+                    XCTAssertEqual(fields["content"] as? String, "Do not send email without approval.")
+                    XCTAssertEqual(fields.count, 2)
+                    response = Data(#"{"id":"memory-1","owner":"user-1","category":"constraint","content":"Do not send email without approval.","active":true,"origin":"explicit","source_conversation":"conversation-1","source_message":"message-1","created":"2026-07-20 08:00:00.000Z","updated":"2026-07-20 10:30:00.000Z"}"#.utf8)
+                }
+
+            case "DELETE":
+                XCTAssertEqual(request.url?.path, "/api/collections/chat_memories/records/memory-1")
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+
+            default:
+                XCTFail("Unexpected saved memory method: \(request.httpMethod ?? "nil")")
+                response = Data()
+            }
+
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                response
+            )
+        }
+
+        let client = try makeClient()
+        let memories = try await client.getSavedMemories(token: "token-value")
+        XCTAssertEqual(memories.count, 1)
+        XCTAssertEqual(memories[0].category, .preference)
+        XCTAssertEqual(memories[0].origin, .explicit)
+        XCTAssertEqual(memories[0].sourceConversationID, "conversation-1")
+
+        let created = try await client.createSavedMemory(
+            category: .goal,
+            content: "Ship the app.",
+            token: "token-value"
+        )
+        XCTAssertEqual(created.category, .goal)
+        XCTAssertEqual(created.origin, .manual)
+        XCTAssertNil(created.sourceConversationID)
+
+        let updated = try await client.updateSavedMemory(
+            id: "memory-1",
+            category: .constraint,
+            content: "Do not send email without approval.",
+            token: "token-value"
+        )
+        XCTAssertEqual(updated.category, .constraint)
+        XCTAssertEqual(updated.content, "Do not send email without approval.")
+
+        let disabled = try await client.setSavedMemoryActive(
+            id: "memory-1",
+            active: false,
+            token: "token-value"
+        )
+        XCTAssertFalse(disabled.active)
+
+        try await client.deleteSavedMemory(id: "memory-1", token: "token-value")
+    }
+
     func testNotificationRealtimeHandshakeSubscribesAndDecodesCreateEvent() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/realtime")

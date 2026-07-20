@@ -354,6 +354,51 @@ final class AuthStore {
         try await makeClient().revokeAPIKey(id: id, token: token)
     }
 
+    func loadSavedMemories() async throws -> [SavedChatMemory] {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getSavedMemories(token: token)
+    }
+
+    func createSavedMemory(
+        category: MemoryCategory,
+        content: String
+    ) async throws -> SavedChatMemory {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().createSavedMemory(
+            category: category,
+            content: content,
+            token: token
+        )
+    }
+
+    func updateSavedMemory(
+        id: String,
+        category: MemoryCategory,
+        content: String
+    ) async throws -> SavedChatMemory {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().updateSavedMemory(
+            id: id,
+            category: category,
+            content: content,
+            token: token
+        )
+    }
+
+    func setSavedMemoryActive(id: String, active: Bool) async throws -> SavedChatMemory {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().setSavedMemoryActive(
+            id: id,
+            active: active,
+            token: token
+        )
+    }
+
+    func deleteSavedMemory(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteSavedMemory(id: id, token: token)
+    }
+
     func loadBoardPage(page: Int, pageSize: Int) async throws -> BoardPage {
         guard let user, let token else { throw sessionUnavailableError }
         return try await makeClient().getBoardPage(

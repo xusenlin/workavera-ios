@@ -46,7 +46,11 @@ struct SettingsView: View {
                     Label("Automatic Capture", systemImage: "wand.and.stars")
                 }
                 .disabled(!auth.memoryEnabled)
-                placeholderRow(title: "Saved Memories", icon: "archivebox")
+                NavigationLink {
+                    SavedMemoriesView()
+                } label: {
+                    Label("Saved Memories", systemImage: "archivebox")
+                }
             } header: {
                 Text("Memory")
             } footer: {

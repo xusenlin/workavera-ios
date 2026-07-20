@@ -620,6 +620,72 @@ struct PocketBaseClient {
         )
     }
 
+    func getSavedMemories(token: String) async throws -> [SavedChatMemory] {
+        try await listAllRecords(
+            collection: "chat_memories",
+            filter: "",
+            sort: "-updated",
+            token: token
+        )
+    }
+
+    func createSavedMemory(
+        category: MemoryCategory,
+        content: String,
+        token: String
+    ) async throws -> SavedChatMemory {
+        struct Body: Encodable {
+            let category: MemoryCategory
+            let content: String
+        }
+        return try await sendJSON(
+            path: "/api/collections/chat_memories/records",
+            method: "POST",
+            body: Body(category: category, content: content),
+            token: token
+        )
+    }
+
+    func updateSavedMemory(
+        id: String,
+        category: MemoryCategory,
+        content: String,
+        token: String
+    ) async throws -> SavedChatMemory {
+        struct Body: Encodable {
+            let category: MemoryCategory
+            let content: String
+        }
+        return try await sendJSON(
+            path: "/api/collections/chat_memories/records/\(id)",
+            method: "PATCH",
+            body: Body(category: category, content: content),
+            token: token
+        )
+    }
+
+    func setSavedMemoryActive(
+        id: String,
+        active: Bool,
+        token: String
+    ) async throws -> SavedChatMemory {
+        struct Body: Encodable { let active: Bool }
+        return try await sendJSON(
+            path: "/api/collections/chat_memories/records/\(id)",
+            method: "PATCH",
+            body: Body(active: active),
+            token: token
+        )
+    }
+
+    func deleteSavedMemory(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/chat_memories/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func getBoardPage(
         userID: String,
         page: Int,
