@@ -369,7 +369,7 @@ final class PocketBaseClientTests: XCTestCase {
                 XCTAssertEqual(query["sort"], "sort_order,id")
                 XCTAssertEqual(query["expand"], "project,project.owner")
                 XCTAssertEqual(query["filter"], "user = \"user-1\" && project.archived = false")
-                body = Data(#"{"page":2,"totalPages":3,"totalItems":9,"items":[{"id":"pref-1","project":"project-1","sort_order":1024,"expand":{"project":{"id":"project-1","name":"Mobile","description":"iOS board","owner":"owner-1","archived":false,"expand":{"owner":{"id":"owner-1","name":"Owner","email":"owner@example.com"}}}}}]}"#.utf8)
+                body = Data(#"{"page":2,"totalPages":3,"totalItems":9,"items":[{"id":"pref-1","project":"project-1","sort_order":1024,"expand":{"project":{"id":"project-1","name":"Mobile","description":"iOS board","owner":"owner-1","archived":false,"expand":{"owner":{"id":"owner-1","collectionId":"users","name":"Owner","email":"owner@example.com","avatar":"owner.png"}}}}}]}"#.utf8)
 
             case "/api/collections/board_project_states/records":
                 XCTAssertEqual(query["filter"], "project = \"project-1\"")
@@ -390,7 +390,7 @@ final class PocketBaseClientTests: XCTestCase {
                 XCTAssertEqual(query["filter"], "project = \"project-1\"")
                 XCTAssertEqual(query["sort"], "created")
                 XCTAssertEqual(query["expand"], "user")
-                body = Data(#"{"items":[{"id":"membership-1","project":"project-1","user":"member-1","expand":{"user":{"id":"member-1","name":"Developer","email":"developer@example.com"}}}]}"#.utf8)
+                body = Data(#"{"items":[{"id":"membership-1","project":"project-1","user":"member-1","expand":{"user":{"id":"member-1","collectionId":"users","name":"Developer","email":"developer@example.com","avatar":"developer.svg"}}}]}"#.utf8)
 
             default:
                 XCTFail("Unexpected Board request: \(request.url?.absoluteString ?? "nil")")
@@ -416,6 +416,13 @@ final class PocketBaseClientTests: XCTestCase {
         let project = try XCTUnwrap(page.projects.first)
         XCTAssertEqual(project.name, "Mobile")
         XCTAssertEqual(project.members.map(\.name), ["Owner", "Developer"])
+        XCTAssertEqual(
+            project.members.map(\.avatarURL?.absoluteString),
+            [
+                "https://example.com/api/files/users/owner-1/owner.png",
+                "https://example.com/api/files/users/member-1/developer.svg",
+            ]
+        )
         XCTAssertEqual(project.labels.map(\.name), ["API"])
         let state = try XCTUnwrap(project.states.first)
         XCTAssertEqual(state.category, .active)
@@ -424,6 +431,10 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertEqual(task.priority, .high)
         XCTAssertEqual(task.labels.map(\.id), ["label-1"])
         XCTAssertEqual(task.assignees.map(\.name), ["Developer"])
+        XCTAssertEqual(
+            task.assignees.first?.avatarURL?.absoluteString,
+            "https://example.com/api/files/users/member-1/developer.svg"
+        )
         XCTAssertEqual(task.documentCount, 2)
         XCTAssertNotNil(task.dueDate)
     }

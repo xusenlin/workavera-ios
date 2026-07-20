@@ -46,6 +46,7 @@ struct BoardLabel: Identifiable, Equatable {
 struct BoardMember: Identifiable, Equatable {
     let id: String
     var name: String
+    var avatarURL: URL?
 }
 
 struct BoardState: Identifiable, Equatable {
@@ -104,18 +105,24 @@ struct BoardPage: Equatable {
 
 struct BoardUserRecord: Decodable {
     let id: String
+    let collectionId: String
     let name: String
     let email: String
+    let avatar: String
 
     var displayName: String { name.isEmpty ? email : name }
 
-    private enum CodingKeys: String, CodingKey { case id, name, email }
+    private enum CodingKeys: String, CodingKey {
+        case id, collectionId, name, email, avatar
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        collectionId = try container.decodeIfPresent(String.self, forKey: .collectionId) ?? ""
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         email = try container.decodeIfPresent(String.self, forKey: .email) ?? ""
+        avatar = try container.decodeIfPresent(String.self, forKey: .avatar) ?? ""
     }
 }
 

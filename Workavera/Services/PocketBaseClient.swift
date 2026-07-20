@@ -645,7 +645,7 @@ struct PocketBaseClient {
             membersRequest
         )
 
-        let projects = Self.assembleBoardProjects(
+        let projects = assembleBoardProjects(
             projects: projectRecords,
             states: stateRecords,
             tasks: taskRecords,
@@ -760,7 +760,7 @@ struct PocketBaseClient {
         projectIDs.map { "project = \"\($0)\"" }.joined(separator: " || ")
     }
 
-    private static func assembleBoardProjects(
+    private func assembleBoardProjects(
         projects: [BoardProjectRecord],
         states: [BoardStateRecord],
         tasks: [BoardTaskRecord],
@@ -775,17 +775,21 @@ struct PocketBaseClient {
         var membersByProject: [String: [BoardMember]] = [:]
         var membersByUserID: [String: BoardMember] = [:]
         for project in projects {
+            let ownerRecord = project.expand?.owner
             let owner = BoardMember(
                 id: project.owner,
-                name: project.expand?.owner?.displayName ?? "Project owner"
+                name: ownerRecord?.displayName ?? "Project owner",
+                avatarURL: ownerRecord.flatMap(boardAvatarURL)
             )
             membersByProject[project.id, default: []].append(owner)
             membersByUserID[owner.id] = owner
         }
         for record in members {
+            let userRecord = record.expand?.user
             let member = BoardMember(
                 id: record.user,
-                name: record.expand?.user?.displayName ?? "Unknown member"
+                name: userRecord?.displayName ?? "Unknown member",
+                avatarURL: userRecord.flatMap(boardAvatarURL)
             )
             guard membersByProject[record.project]?.contains(where: { $0.id == member.id }) != true else {
                 continue
@@ -803,10 +807,14 @@ struct PocketBaseClient {
                 title: record.title,
                 description: record.description,
                 priority: record.priority,
-                dueDate: boardDate(record.dueDate),
+                dueDate: Self.boardDate(record.dueDate),
                 labels: record.labelIDs.compactMap { labelsByID[$0] },
                 assignees: record.assigneeIDs.map {
-                    membersByUserID[$0] ?? BoardMember(id: $0, name: "Unknown member")
+                    membersByUserID[$0] ?? BoardMember(
+                        id: $0,
+                        name: "Unknown member",
+                        avatarURL: nil
+                    )
                 },
                 documentCount: record.documentIDs.count,
                 rank: record.rank
@@ -840,6 +848,14 @@ struct PocketBaseClient {
                 states: (statesByProject[project.id] ?? []).sorted { $0.sortOrder < $1.sortOrder }
             )
         }
+    }
+
+    private func boardAvatarURL(for user: BoardUserRecord) -> URL? {
+        fileURL(
+            collectionId: user.collectionId,
+            recordId: user.id,
+            fileName: user.avatar
+        )
     }
 
     private static func boardDate(_ value: String) -> Date? {

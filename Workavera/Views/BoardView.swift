@@ -141,20 +141,23 @@ struct BoardView: View {
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(isSelected ? .primary : .secondary)
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                        .frame(height: 34)
                         .background(
                             Color(.secondarySystemGroupedBackground),
                             in: Capsule()
                         )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(Color.accentColor, lineWidth: isSelected ? 1.5 : 0)
-                        )
+                        .overlay {
+                            if isSelected {
+                                Capsule()
+                                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                            }
+                        }
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 20)
+            .padding(.vertical, 2)
         }
     }
 
@@ -725,7 +728,7 @@ private struct MemberStack: View {
     var body: some View {
         HStack(spacing: -(size * 0.3)) {
             ForEach(members.prefix(max)) { member in
-                AvatarView(url: nil, name: member.name, size: size)
+                AvatarView(url: member.avatarURL, name: member.name, size: size)
                     .overlay(Circle().stroke(borderColor, lineWidth: 1.5))
             }
             if members.count > max {
