@@ -3,6 +3,7 @@ import SwiftUI
 /// 工作概览：问候语使用真实用户信息，统计数字为占位。
 struct DashboardView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(NotificationStore.self) private var notifications
     var onNavigate: ((AppSection) -> Void)? = nil
 
     private let columns = [
@@ -26,8 +27,12 @@ struct DashboardView: View {
             }
             .padding(20)
         }
+        .scrollBounceBehavior(.always)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Dashboard")
+        .refreshable {
+            await notifications.refresh(using: auth)
+        }
     }
 
     private var greetingCard: some View {

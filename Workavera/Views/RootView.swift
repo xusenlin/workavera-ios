@@ -3,6 +3,7 @@ import SwiftUI
 /// 登录后的主界面：侧边栏（iPhone 上为列表导航）+ 各模块详情。
 struct RootView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(NotificationStore.self) private var notifications
     @State private var selection: AppSection? = .dashboard
 
     var body: some View {
@@ -11,7 +12,18 @@ struct RootView: View {
         } detail: {
             NavigationStack {
                 detail(for: selection ?? .dashboard)
+                    .toolbar {
+                        if selection == .dashboard {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                notificationBell
+                            }
+                        }
+                    }
             }
+        }
+        .task(id: auth.user?.id) {
+            notifications.reset()
+            await notifications.refresh(using: auth)
         }
     }
 
@@ -42,11 +54,7 @@ struct RootView: View {
         .navigationTitle("Workavera")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    selection = .notifications
-                } label: {
-                    Image(systemName: AppSection.notifications.icon)
-                }
+                notificationBell
             }
         }
     }
@@ -92,6 +100,12 @@ struct RootView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private var notificationBell: some View {
+        NotificationBellButton(unreadCount: notifications.unreadCount) {
+            selection = .notifications
+        }
     }
 
     @ViewBuilder

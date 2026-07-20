@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct WorkaveraApp: App {
     @State private var auth = AuthStore()
+    @State private var notifications = NotificationStore()
 
     var body: some Scene {
         WindowGroup {
@@ -20,6 +21,7 @@ struct WorkaveraApp: App {
                 }
             }
             .environment(auth)
+            .environment(notifications)
             .preferredColorScheme(auth.appearance.colorScheme)
         }
     }

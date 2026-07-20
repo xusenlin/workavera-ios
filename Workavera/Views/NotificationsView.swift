@@ -1,29 +1,86 @@
 import SwiftUI
 
-/// 通知页面：分组列表 + 下拉刷新 + 底部分页。
-/// 当前为示例数据（AppNotification.sample），接入 API 后替换为真实数据。
 struct NotificationsView: View {
-    @State private var notifications = AppNotification.sample
-    @State private var page = 0
-
-    private let pageSize = 8
-
-    private var pageCount: Int {
-        max(1, Int(ceil(Double(notifications.count) / Double(pageSize))))
-    }
-
-    private var pageNotifications: [AppNotification] {
-        Array(notifications.dropFirst(page * pageSize).prefix(pageSize))
-    }
-
-    private var unreadCount: Int {
-        notifications.filter { !$0.isRead }.count
-    }
+    @Environment(AuthStore.self) private var auth
+    @Environment(NotificationStore.self) private var notifications
+    @State private var deleteTarget: AppNotification?
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
+        Group {
+            if !notifications.hasLoaded && notifications.isLoading {
+                ProgressView("Loading notifications…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if notifications.items.isEmpty {
+                ContentUnavailableView {
+                    Label("No Notifications", systemImage: "bell.slash")
+                } description: {
+                    if let error = notifications.errorMessage {
+                        Text(error)
+                    } else {
+                        Text("New task reminders, calendar events, and model shares will appear here.")
+                    }
+                } actions: {
+                    Button("Refresh") {
+                        Task { await notifications.refresh(using: auth) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            } else {
+                notificationList
+            }
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Notifications")
+        .toolbar {
+            if notifications.unreadCount > 0 {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Mark All Read") {
+                        Task { await notifications.markAllRead(using: auth) }
+                    }
+                }
+            }
+        }
+        .alert("Could Not Update Notifications", isPresented: errorPresented) {
+            Button("OK", role: .cancel) { notifications.clearError() }
+        } message: {
+            Text(notifications.errorMessage ?? "Unknown error")
+        }
+        .confirmationDialog(
+            "Delete Notification?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible,
+            presenting: deleteTarget
+        ) { notification in
+            Button("Delete", role: .destructive) {
+                Task { await notifications.delete(notification, using: auth) }
+                deleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) {
+                deleteTarget = nil
+            }
+        } message: { _ in
+            Text("This notification will be permanently deleted. This action cannot be undone.")
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 0) {
+                Divider()
+                PaginationBar(
+                    pageCount: notifications.totalPages,
+                    page: pageBinding,
+                    alwaysVisible: true
+                )
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+            }
+            .background(Color(.systemGroupedBackground))
+        }
+    }
+
+    private var notificationList: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(Array(pageNotifications.enumerated()), id: \.element.id) { index, notification in
+                ForEach(Array(notifications.items.enumerated()), id: \.element.id) { index, notification in
                     if index > 0 {
                         Divider()
                             .padding(.leading, 62)
@@ -37,95 +94,162 @@ struct NotificationsView: View {
             )
             .padding(20)
         }
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle("Notifications")
-        .toolbar {
-            if unreadCount > 0 {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Mark All Read") {
-                        markAllRead()
-                    }
-                }
-            }
-        }
+        .scrollBounceBehavior(.always)
         .refreshable {
-            await reload()
-        }
-        .safeAreaInset(edge: .bottom) {
-            if pageCount > 1 {
-                VStack(spacing: 0) {
-                    Divider()
-                    PaginationBar(pageCount: pageCount, page: $page)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                }
-                .background(Color(.systemGroupedBackground))
-            }
+            await notifications.refresh(using: auth)
         }
     }
 
     private func row(_ notification: AppNotification) -> some View {
-        Button {
-            markRead(notification.id)
-        } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: notification.type.icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(notification.type.color)
-                    .frame(width: 34, height: 34)
-                    .background(notification.type.color.opacity(0.15), in: Circle())
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                Task { await notifications.markRead(notification, using: auth) }
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: notification.type.icon)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(notification.type.color)
+                        .frame(width: 34, height: 34)
+                        .background(notification.type.color.opacity(0.15), in: Circle())
+                        .overlay(alignment: .topLeading) {
+                            if !notification.isRead {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 9, height: 9)
+                                    .overlay(Circle().stroke(Color(.secondarySystemGroupedBackground), lineWidth: 1.5))
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                        }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(notification.title)
-                        .font(.subheadline.weight(notification.isRead ? .regular : .semibold))
-                        .foregroundStyle(.primary)
-                    Text(notification.body)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(notification.createdAt.formatted(.relative(presentation: .named)))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 5) {
+                            if notification.pinned {
+                                Image(systemName: "pin.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(notification.title)
+                                .font(.subheadline.weight(notification.isRead ? .regular : .semibold))
+                                .foregroundStyle(.primary)
+                        }
+                        if !notification.body.isEmpty {
+                            Text(notification.body)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text(notification.createdAt.formatted(.relative(presentation: .named)))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer(minLength: 4)
                 }
-
-                Spacer(minLength: 4)
-
-                if !notification.isRead {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 8, height: 8)
-                        .padding(.top, 5)
-                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .padding(.trailing, 30)
+
+            if notification.type == .modelShare {
+                modelShareActions(notification)
+                    .padding(.leading, 46)
+            }
         }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - 本地状态操作（接入 API 后改为写后端）
-
-    /// 下拉刷新：模拟网络请求后重建示例数据，保留已读状态。
-    private func reload() async {
-        try? await Task.sleep(for: .milliseconds(600))
-        let readIDs = Set(notifications.filter(\.isRead).map(\.id))
-        notifications = AppNotification.sample.map {
-            var notification = $0
-            notification.isRead = readIDs.contains(notification.id)
-            return notification
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .overlay(alignment: .topTrailing) {
+            notificationMenu(notification)
+                .padding(.top, 8)
+                .padding(.trailing, 8)
         }
     }
 
-    private func markRead(_ id: String) {
-        guard let index = notifications.firstIndex(where: { $0.id == id }) else { return }
-        notifications[index].isRead = true
+    private func notificationMenu(_ notification: AppNotification) -> some View {
+        Menu {
+            Button {
+                Task { await notifications.archive(notification, using: auth) }
+            } label: {
+                Label("Archive", systemImage: "archivebox")
+            }
+
+            Button(role: .destructive) {
+                deleteTarget = notification
+                showDeleteConfirmation = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .disabled(notifications.isManaging(id: notification.id))
     }
 
-    private func markAllRead() {
-        for index in notifications.indices {
-            notifications[index].isRead = true
+    @ViewBuilder
+    private func modelShareActions(_ notification: AppNotification) -> some View {
+        let status = notification.data.shareStatus ?? .pending
+        if status == .pending {
+            VStack(alignment: .leading, spacing: 8) {
+                if let modelName = notification.data.modelName {
+                    Text(modelName)
+                        .font(.caption.weight(.semibold))
+                }
+                if let senderName = notification.data.senderName {
+                    Text("Shared by \(senderName). Accepting creates an independent model configuration.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 8) {
+                    Button {
+                        respond(to: notification, decision: .accept)
+                    } label: {
+                        Label("Accept", systemImage: "checkmark.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        respond(to: notification, decision: .reject)
+                    } label: {
+                        Label("Reject", systemImage: "xmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .controlSize(.small)
+                .disabled(notifications.isRespondingToShare(id: notification.id))
+            }
+        } else {
+            Label(
+                status == .accepted ? "Model configuration added" : "Share invitation declined",
+                systemImage: status == .accepted ? "checkmark.circle.fill" : "xmark.circle.fill"
+            )
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(status == .accepted ? .green : .secondary)
         }
+    }
+
+    private func respond(to notification: AppNotification, decision: ModelShareDecision) {
+        Task {
+            await notifications.respondToModelShare(notification, decision: decision, using: auth)
+        }
+    }
+
+    private var pageBinding: Binding<Int> {
+        Binding(
+            get: { notifications.page },
+            set: { page in
+                Task { await notifications.loadPage(page, using: auth) }
+            }
+        )
+    }
+
+    private var errorPresented: Binding<Bool> {
+        Binding(
+            get: { notifications.errorMessage != nil && !notifications.items.isEmpty },
+            set: { if !$0 { notifications.clearError() } }
+        )
     }
 }

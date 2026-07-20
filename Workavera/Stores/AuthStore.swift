@@ -233,11 +233,65 @@ final class AuthStore {
         await loadPreferences()
     }
 
+    func loadNotifications(page: Int, pageSize: Int) async throws -> NotificationPage {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getNotifications(
+            page: page,
+            pageSize: pageSize,
+            token: token
+        )
+    }
+
+    func loadUnreadNotificationCount() async throws -> Int {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getUnreadNotificationCount(token: token)
+    }
+
+    func markNotificationRead(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().markNotificationRead(id: id, token: token)
+    }
+
+    func markAllNotificationsRead() async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().markAllNotificationsRead(token: token)
+    }
+
+    func respondToModelShare(
+        notificationID: String,
+        decision: ModelShareDecision
+    ) async throws -> ModelShareStatus {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().respondToModelShare(
+            notificationID: notificationID,
+            decision: decision,
+            token: token
+        )
+    }
+
+    func archiveNotification(id: String) async throws -> AppNotification {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().archiveNotification(id: id, token: token)
+    }
+
+    func deleteNotification(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteNotification(id: id, token: token)
+    }
+
     private func makeClient() throws -> PocketBaseClient {
         try PocketBaseClient(
             baseURLString: serverAddress,
             allowInsecureHTTP: allowInsecureHTTP,
             session: session
+        )
+    }
+
+    private var sessionUnavailableError: APIError {
+        APIError.http(
+            statusCode: 401,
+            message: "Your session is no longer available. Sign in again.",
+            fieldMessages: [:]
         )
     }
 

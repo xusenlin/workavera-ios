@@ -1,13 +1,14 @@
 import SwiftUI
 
 /// 通用分页栏：两侧圆形翻页按钮 + 中间胶囊圆点指示器，圆点可点击跳页。
-/// 只有一页时不渲染。
+/// 默认只有多页时渲染；需要稳定布局的页面可设置 alwaysVisible。
 struct PaginationBar: View {
     let pageCount: Int
     @Binding var page: Int
+    var alwaysVisible = false
 
     var body: some View {
-        if pageCount > 1 {
+        if alwaysVisible || pageCount > 1 {
             HStack {
                 pageButton(icon: "chevron.left", disabled: page <= 0) {
                     page -= 1

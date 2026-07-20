@@ -180,6 +180,93 @@ struct PocketBaseClient {
         )
     }
 
+    func getNotifications(page: Int, pageSize: Int, token: String) async throws -> NotificationPage {
+        let response: RecordListResponse<AppNotification> = try await send(
+            path: "/api/collections/notifications/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "perPage", value: String(pageSize)),
+                URLQueryItem(name: "sort", value: "-pinned,-created"),
+                URLQueryItem(name: "filter", value: "status = \"active\""),
+            ],
+            token: token
+        )
+        return NotificationPage(
+            items: response.items,
+            page: response.page,
+            totalPages: response.totalPages,
+            totalItems: response.totalItems
+        )
+    }
+
+    func getUnreadNotificationCount(token: String) async throws -> Int {
+        let response: RecordListResponse<AppNotification> = try await send(
+            path: "/api/collections/notifications/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "page", value: "1"),
+                URLQueryItem(name: "perPage", value: "1"),
+                URLQueryItem(name: "filter", value: "status = \"active\" && read_at = \"\""),
+            ],
+            token: token
+        )
+        return response.totalItems
+    }
+
+    func markNotificationRead(id: String, token: String) async throws {
+        let _: NotificationMutationResponse = try await send(
+            path: "/api/notifications/\(id)/read",
+            method: "POST",
+            token: token
+        )
+    }
+
+    func markAllNotificationsRead(token: String) async throws {
+        let _: NotificationMutationResponse = try await send(
+            path: "/api/notifications/read-all",
+            method: "POST",
+            token: token
+        )
+    }
+
+    func respondToModelShare(
+        notificationID: String,
+        decision: ModelShareDecision,
+        token: String
+    ) async throws -> ModelShareStatus {
+        struct Body: Encodable { let decision: ModelShareDecision }
+        struct Response: Decodable { let status: ModelShareStatus }
+        let response: Response = try await sendJSON(
+            path: "/api/llm/shares/\(notificationID)/respond",
+            method: "POST",
+            body: Body(decision: decision),
+            token: token
+        )
+        return response.status
+    }
+
+    func archiveNotification(id: String, token: String) async throws -> AppNotification {
+        struct Body: Encodable {
+            let status = "archived"
+            let pinned = false
+        }
+        return try await sendJSON(
+            path: "/api/collections/notifications/records/\(id)",
+            method: "PATCH",
+            body: Body(),
+            token: token
+        )
+    }
+
+    func deleteNotification(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/notifications/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func fileURL(collectionId: String, recordId: String, fileName: String) -> URL? {
         guard !fileName.isEmpty else { return nil }
         return configuration.baseURL.appending(
@@ -210,6 +297,37 @@ struct PocketBaseClient {
         contentType: String? = nil,
         token: String? = nil
     ) async throws -> T {
+        let data = try await perform(
+            path: path,
+            method: method,
+            queryItems: queryItems,
+            body: body,
+            contentType: contentType,
+            token: token
+        )
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding(error.localizedDescription)
+        }
+    }
+
+    private func sendWithoutResponse(
+        path: String,
+        method: String,
+        token: String? = nil
+    ) async throws {
+        _ = try await perform(path: path, method: method, token: token)
+    }
+
+    private func perform(
+        path: String,
+        method: String,
+        queryItems: [URLQueryItem] = [],
+        body: Data? = nil,
+        contentType: String? = nil,
+        token: String? = nil
+    ) async throws -> Data {
         var components = URLComponents(
             url: configuration.baseURL.appending(path: path),
             resolvingAgainstBaseURL: false
@@ -252,11 +370,7 @@ struct PocketBaseClient {
                 fieldMessages: details.fieldMessages
             )
         }
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw APIError.decoding(error.localizedDescription)
-        }
+        return data
     }
 
     private static func errorDetails(
@@ -281,7 +395,24 @@ struct PocketBaseClient {
 
 private struct RecordListResponse<Record: Decodable>: Decodable {
     let items: [Record]
+    let page: Int
+    let totalPages: Int
+    let totalItems: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case items, page, totalPages, totalItems
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = try container.decode([Record].self, forKey: .items)
+        page = try container.decodeIfPresent(Int.self, forKey: .page) ?? 1
+        totalPages = try container.decodeIfPresent(Int.self, forKey: .totalPages) ?? 1
+        totalItems = try container.decodeIfPresent(Int.self, forKey: .totalItems) ?? items.count
+    }
 }
+
+private struct NotificationMutationResponse: Decodable {}
 
 private struct MultipartFormData {
     private let boundary = "Workavera-\(UUID().uuidString)"
