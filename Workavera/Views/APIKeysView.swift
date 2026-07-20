@@ -128,13 +128,7 @@ private struct APIKeyRow: View {
     let onRevoke: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "key")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 36, height: 36)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
-
+        HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(key.name)
@@ -151,13 +145,18 @@ private struct APIKeyRow: View {
                 Text("\(key.prefix)…")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
-                Text(expirationText)
-                    .font(.caption2)
-                    .foregroundStyle(isExpired ? Color.red : Color.secondary.opacity(0.7))
-                Text(lastUsedText)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 4) {
+                    Text(expirationText)
+                        .foregroundStyle(isExpired ? Color.red : Color.secondary.opacity(0.7))
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(lastUsedText)
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.caption2)
+                .lineLimit(1)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 8)
 
@@ -174,6 +173,10 @@ private struct APIKeyRow: View {
             .accessibilityLabel("Revoke \(key.name)")
         }
         .padding(.vertical, 5)
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+        .alignmentGuide(.listRowSeparatorTrailing) { dimensions in
+            dimensions.width
+        }
     }
 
     private var isExpired: Bool {

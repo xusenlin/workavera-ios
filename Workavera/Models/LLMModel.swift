@@ -107,9 +107,18 @@ struct LLMShareResponse: Decodable, Equatable {
 
 enum LLMTokenFormat {
     static func display(_ value: Int) -> String {
-        guard value >= 1_000 else { return String(value) }
-        if value % 1_000_000 == 0 { return "\(value / 1_000_000)M" }
-        if value % 1_000 == 0 { return "\(value / 1_000)k" }
-        return value.formatted()
+        if value >= 1_000_000 {
+            return compact(Double(value) / 1_000_000) + "M"
+        }
+        if value >= 1_000 {
+            return compact(Double(value) / 1_000) + "k"
+        }
+        return String(value)
+    }
+
+    private static func compact(_ value: Double) -> String {
+        let rounded = (value * 10).rounded() / 10
+        if rounded.rounded() == rounded { return String(Int(rounded)) }
+        return String(format: "%.1f", rounded)
     }
 }

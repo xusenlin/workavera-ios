@@ -112,17 +112,13 @@ private struct ModelConfigurationRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 36, height: 36)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
-
+        HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Text(model.name)
                         .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .layoutPriority(1)
                     if model.isDefault {
                         Text("DEFAULT")
                             .font(.system(size: 8, weight: .bold))
@@ -130,7 +126,15 @@ private struct ModelConfigurationRow: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .background(Color.green.opacity(0.12), in: Capsule())
+                            .fixedSize()
                     }
+                    if model.hasAPIKey {
+                        Image(systemName: "key.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("API key configured")
+                    }
+                    Spacer(minLength: 2)
                 }
 
                 Text("\(model.modelID) · \(model.baseURL)")
@@ -139,18 +143,14 @@ private struct ModelConfigurationRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                HStack(spacing: 8) {
-                    Label(model.protocolType.label, systemImage: "network")
-                    Label(
-                        "\(LLMTokenFormat.display(outputTokens)) / \(LLMTokenFormat.display(contextTokens))",
-                        systemImage: "text.word.spacing"
-                    )
-                    if model.hasAPIKey {
-                        Label("Key", systemImage: "key.fill")
-                    }
-                }
+                Text(
+                    "\(model.protocolType.label) · "
+                        + "\(LLMTokenFormat.display(contextTokens)) · "
+                        + LLMTokenFormat.display(outputTokens)
+                )
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .lineLimit(1)
 
                 if model.isSharedCopy {
                     Label(
@@ -161,6 +161,7 @@ private struct ModelConfigurationRow: View {
                     .foregroundStyle(.secondary)
                 }
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 4)
 
@@ -187,6 +188,10 @@ private struct ModelConfigurationRow: View {
             }
         }
         .padding(.vertical, 5)
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+        .alignmentGuide(.listRowSeparatorTrailing) { dimensions in
+            dimensions.width
+        }
     }
 
     private var outputTokens: Int {

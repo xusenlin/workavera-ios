@@ -47,6 +47,44 @@ final class AuthStoreTests: XCTestCase {
         XCTAssertNil(store.token)
     }
 
+    func testReloadPreferencesRecoversFromInitialTransportFailure() async throws {
+        var preferenceAttempts = 0
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/api/collections/users/auth-with-password":
+                let body = Data(#"{"token":"fresh-token","record":{"id":"user-1","collectionId":"_pb_users_auth_","collectionName":"users","email":"person@example.com","emailVisibility":true,"verified":true,"name":"Person","avatar":"","phone":"","title":"","bio":"","status":"online","created":"","updated":""}}"#.utf8)
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    body
+                )
+            case "/api/collections/user_preferences/records":
+                preferenceAttempts += 1
+                if preferenceAttempts == 1 {
+                    throw URLError(.notConnectedToInternet)
+                }
+                let body = Data(#"{"items":[{"id":"pref-1","owner":"user-1","theme":"dark","memory_enabled":true,"memory_auto_capture":false}]}"#.utf8)
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    body
+                )
+            default:
+                throw URLError(.badURL)
+            }
+        }
+        let store = makeStore()
+
+        try await store.login(email: "person@example.com", password: "secret")
+        XCTAssertNil(store.preferences)
+        XCTAssertNotNil(store.preferencesMessage)
+
+        await store.reloadPreferences()
+
+        XCTAssertEqual(store.preferences?.theme, .dark)
+        XCTAssertTrue(store.memoryEnabled)
+        XCTAssertNil(store.preferencesMessage)
+        XCTAssertEqual(preferenceAttempts, 2)
+    }
+
     private func makeStore() -> AuthStore {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

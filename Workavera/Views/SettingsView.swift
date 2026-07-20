@@ -7,6 +7,23 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            if let preferencesMessage = auth.preferencesMessage {
+                Section {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle")
+                        Text(preferencesMessage)
+                            .font(.footnote)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Retry") {
+                            Task { await auth.reloadPreferences() }
+                        }
+                        .font(.footnote.weight(.medium))
+                    }
+                    .foregroundStyle(.red)
+                }
+                .listRowBackground(Color.red.opacity(0.08))
+            }
+
             Section("Server") {
                 LabeledContent {
                     Text(auth.serverAddress)
@@ -77,18 +94,6 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
             }
 
-            if let preferencesMessage = auth.preferencesMessage {
-                Section {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label(preferencesMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                        Button("Retry Loading Preferences") {
-                            Task { await auth.reloadPreferences() }
-                        }
-                    }
-                }
-            }
-
             Section("Account") {
                 LabeledContent {
                     Text(auth.user?.email ?? "")
@@ -125,6 +130,9 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await auth.reloadPreferences()
+        }
         .alert("Could Not Save Settings", isPresented: errorPresented) {
             Button("OK", role: .cancel) {}
         } message: {

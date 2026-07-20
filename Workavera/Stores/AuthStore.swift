@@ -38,6 +38,7 @@ final class AuthStore {
     private let tokenStore: any TokenStoring
     private let session: URLSession
     private var latestStatusRequestID: UUID?
+    private var latestPreferencesRequestID: UUID?
 
     private static let serverKey = "workavera.serverAddress"
     private static let insecureHTTPKey = "workavera.allowInsecureHTTP"
@@ -536,12 +537,22 @@ final class AuthStore {
 
     private func loadPreferences() async {
         guard let user, let token else { return }
+        let requestID = UUID()
+        latestPreferencesRequestID = requestID
+        preferencesMessage = nil
+
         do {
             let loaded = try await makeClient().getPreferences(ownerID: user.id, token: token)
+            guard latestPreferencesRequestID == requestID,
+                  self.user?.id == user.id,
+                  self.token == token else { return }
             preferences = loaded
             fallbackAppearance = loaded.theme
             preferencesMessage = nil
         } catch {
+            guard latestPreferencesRequestID == requestID,
+                  self.user?.id == user.id,
+                  self.token == token else { return }
             preferencesMessage = error.localizedDescription
         }
     }
@@ -552,6 +563,7 @@ final class AuthStore {
         preferences = nil
         preferencesMessage = nil
         latestStatusRequestID = nil
+        latestPreferencesRequestID = nil
     }
 
     private func failRecovery(_ error: Error) {
