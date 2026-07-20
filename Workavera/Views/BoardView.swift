@@ -210,61 +210,16 @@ private struct ProjectSwitcherSheet: View {
 
                 if pageCount > 1 {
                     Divider()
-                    paginationBar
+                    PaginationBar(pageCount: pageCount, page: $page)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
                 }
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Switch Project")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
         .presentationDetents([.medium, .large])
-    }
-
-    private var paginationBar: some View {
-        HStack {
-            pageButton(icon: "chevron.left", disabled: page == 0) {
-                page -= 1
-            }
-
-            Spacer()
-
-            HStack(spacing: 6) {
-                ForEach(0..<pageCount, id: \.self) { index in
-                    Capsule()
-                        .fill(index == page ? Color.accentColor : Color(.systemGray4))
-                        .frame(width: index == page ? 18 : 6, height: 6)
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.15)) { page = index }
-                        }
-                }
-            }
-
-            Spacer()
-
-            pageButton(icon: "chevron.right", disabled: page >= pageCount - 1) {
-                page += 1
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-    }
-
-    private func pageButton(icon: String, disabled: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) { action() }
-        } label: {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(disabled ? Color(.systemGray3) : Color.accentColor)
-                .frame(width: 34, height: 34)
-                .background(Color(.tertiarySystemFill), in: Circle())
-        }
-        .disabled(disabled)
     }
 }
 
