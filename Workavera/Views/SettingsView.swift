@@ -2,7 +2,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AuthStore.self) private var auth
-    @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
+    @State private var errorMessage: String?
+    @State private var confirmSignOut = false
 
     var body: some View {
         Form {
@@ -27,7 +28,13 @@ struct SettingsView: View {
             }
 
             Section {
-                placeholderRow(title: "Memory Toggle", icon: "brain.head.profile")
+                Toggle(isOn: memoryEnabledBinding) {
+                    Label("Use Chat Memory", systemImage: "brain.head.profile")
+                }
+                Toggle(isOn: memoryAutoCaptureBinding) {
+                    Label("Automatic Capture", systemImage: "wand.and.stars")
+                }
+                .disabled(!auth.memoryEnabled)
                 placeholderRow(title: "Saved Memories", icon: "archivebox")
             } header: {
                 Text("Memory")
@@ -36,15 +43,27 @@ struct SettingsView: View {
             }
 
             Section("Appearance") {
-                Picker(selection: $appearanceRaw) {
+                Picker(selection: appearanceBinding) {
                     ForEach(AppAppearance.allCases) { appearance in
                         Text(appearance.label)
-                            .tag(appearance.rawValue)
+                            .tag(appearance)
                     }
                 } label: {
                     Label("Theme", systemImage: "circle.lefthalf.filled")
                 }
                 .pickerStyle(.menu)
+            }
+
+            if let preferencesMessage = auth.preferencesMessage {
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(preferencesMessage, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                        Button("Retry Loading Preferences") {
+                            Task { await auth.reloadPreferences() }
+                        }
+                    }
+                }
             }
 
             Section("Account") {
@@ -54,7 +73,7 @@ struct SettingsView: View {
                     Label("Email", systemImage: "envelope")
                 }
                 Button(role: .destructive) {
-                    auth.logout()
+                    confirmSignOut = true
                 } label: {
                     Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         .foregroundStyle(.red)
@@ -83,6 +102,23 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Could Not Save Settings", isPresented: errorPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Unknown error")
+        }
+        .confirmationDialog(
+            "Sign out of Workavera?",
+            isPresented: $confirmSignOut,
+            titleVisibility: .visible
+        ) {
+            Button("Sign Out", role: .destructive) {
+                auth.logout()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your session will be removed from this device.")
+        }
     }
 
     /// 从 Bundle 读取版本号，与工程配置 MARKETING_VERSION 保持单一来源。
@@ -98,5 +134,57 @@ struct SettingsView: View {
         } label: {
             Label(title, systemImage: icon)
         }
+    }
+
+    private var appearanceBinding: Binding<AppAppearance> {
+        Binding(
+            get: { auth.appearance },
+            set: { appearance in
+                Task {
+                    do {
+                        try await auth.updateAppearance(appearance)
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
+        )
+    }
+
+    private var memoryEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { auth.memoryEnabled },
+            set: { enabled in
+                Task {
+                    do {
+                        try await auth.updateMemoryEnabled(enabled)
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
+        )
+    }
+
+    private var memoryAutoCaptureBinding: Binding<Bool> {
+        Binding(
+            get: { auth.memoryAutoCapture },
+            set: { enabled in
+                Task {
+                    do {
+                        try await auth.updateMemoryAutoCapture(enabled)
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
+        )
+    }
+
+    private var errorPresented: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
     }
 }

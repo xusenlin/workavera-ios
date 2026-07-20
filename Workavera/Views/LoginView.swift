@@ -153,35 +153,3 @@ struct LoginView: View {
         isLoading = false
     }
 }
-
-/// 服务器地址设置弹窗。
-private struct ServerSettingsSheet: View {
-    @Environment(AuthStore.self) private var auth
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        @Bindable var auth = auth
-
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("http://127.0.0.1:8090", text: $auth.serverAddress)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } header: {
-                    Text("Server Address")
-                } footer: {
-                    Text("The address of your self-hosted Workavera server, e.g. https://workavera.example.com")
-                }
-            }
-            .navigationTitle("Server Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}

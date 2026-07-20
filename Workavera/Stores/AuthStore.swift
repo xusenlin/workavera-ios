@@ -1,12 +1,12 @@
 import Foundation
 import Observation
 
-/// 全局认证状态：登录、会话恢复、当前用户与状态更新。
 @MainActor
 @Observable
 final class AuthStore {
-    enum Phase {
+    enum Phase: Equatable {
         case restoring
+        case recoveryFailed
         case loggedOut
         case loggedIn
     }
@@ -14,82 +14,272 @@ final class AuthStore {
     private(set) var phase: Phase = .restoring
     private(set) var user: User?
     private(set) var token: String?
+    private(set) var preferences: UserPreferences?
+    private(set) var recoveryMessage: String?
+    private(set) var preferencesMessage: String?
 
-    /// PocketBase 服务器地址，可在登录页修改。
     var serverAddress: String {
-        didSet { UserDefaults.standard.set(serverAddress, forKey: Self.serverKey) }
+        didSet { defaults.set(serverAddress, forKey: Self.serverKey) }
     }
 
-    /// 上次成功登录的邮箱，用于登录页自动填充。
-    private(set) var lastLoginEmail: String {
-        didSet { UserDefaults.standard.set(lastLoginEmail, forKey: Self.lastEmailKey) }
+    var allowInsecureHTTP: Bool {
+        didSet { defaults.set(allowInsecureHTTP, forKey: Self.insecureHTTPKey) }
     }
+
+    private(set) var lastLoginEmail: String {
+        didSet { defaults.set(lastLoginEmail, forKey: Self.lastEmailKey) }
+    }
+
+    private(set) var fallbackAppearance: AppAppearance {
+        didSet { defaults.set(fallbackAppearance.rawValue, forKey: AppAppearance.storageKey) }
+    }
+
+    private let defaults: UserDefaults
+    private let tokenStore: any TokenStoring
+    private let session: URLSession
+    private var latestStatusRequestID: UUID?
 
     private static let serverKey = "workavera.serverAddress"
+    private static let insecureHTTPKey = "workavera.allowInsecureHTTP"
     private static let lastEmailKey = "workavera.lastLoginEmail"
-    private static let tokenAccount = "workavera.authToken"
+    private static let legacyTokenAccount = "workavera.authToken"
+    private static let tokenAccountPrefix = "workavera.authToken.server:"
 
-    init() {
-        serverAddress = UserDefaults.standard.string(forKey: Self.serverKey) ?? "http://127.0.0.1:8090"
-        lastLoginEmail = UserDefaults.standard.string(forKey: Self.lastEmailKey) ?? ""
+    init(
+        defaults: UserDefaults = .standard,
+        tokenStore: any TokenStoring = KeychainTokenStore(),
+        session: URLSession = .shared
+    ) {
+        self.defaults = defaults
+        self.tokenStore = tokenStore
+        self.session = session
+        serverAddress = defaults.string(forKey: Self.serverKey) ?? "http://127.0.0.1:8090"
+        allowInsecureHTTP = defaults.bool(forKey: Self.insecureHTTPKey)
+        lastLoginEmail = defaults.string(forKey: Self.lastEmailKey) ?? ""
+        let appearance = defaults.string(forKey: AppAppearance.storageKey) ?? AppAppearance.system.rawValue
+        fallbackAppearance = AppAppearance(rawValue: appearance) ?? .system
     }
 
-    private var client: PocketBaseClient? {
-        PocketBaseClient(baseURLString: serverAddress)
+    var appearance: AppAppearance {
+        preferences?.theme ?? fallbackAppearance
+    }
+
+    var memoryEnabled: Bool {
+        preferences?.memoryEnabled ?? false
+    }
+
+    var memoryAutoCapture: Bool {
+        preferences?.memoryAutoCapture ?? false
     }
 
     var avatarURL: URL? {
-        guard let user, let client else { return nil }
-        return client.fileURL(collectionId: user.collectionId, recordId: user.id, fileName: user.avatar)
+        guard let user, let client = try? makeClient() else { return nil }
+        return client.fileURL(
+            collectionId: user.collectionId,
+            recordId: user.id,
+            fileName: user.avatar
+        )
     }
 
-    /// App 启动时用保存的 token 换取最新的用户记录。
+    func updateServerSettings(address: String, allowInsecureHTTP: Bool) throws {
+        let configuration = try ServerConfiguration(
+            address: address,
+            allowInsecureHTTP: allowInsecureHTTP
+        )
+        serverAddress = configuration.normalizedAddress
+        self.allowInsecureHTTP = allowInsecureHTTP
+    }
+
     func restoreSession() async {
-        guard let savedToken = Keychain.read(account: Self.tokenAccount), let client else {
-            phase = .loggedOut
+        phase = .restoring
+        recoveryMessage = nil
+
+        let account = tokenAccount
+        let savedToken: String
+        do {
+            if let scopedToken = try tokenStore.read(account: account) {
+                savedToken = scopedToken
+            } else if let legacyToken = try tokenStore.read(account: Self.legacyTokenAccount) {
+                try tokenStore.save(legacyToken, account: account)
+                try tokenStore.delete(account: Self.legacyTokenAccount)
+                savedToken = legacyToken
+            } else {
+                phase = .loggedOut
+                return
+            }
+        } catch {
+            failRecovery(error)
             return
         }
+
         do {
-            apply(try await client.authRefresh(token: savedToken))
-        } catch {
-            Keychain.delete(account: Self.tokenAccount)
+            let auth = try await makeClient().authRefresh(token: savedToken)
+            try apply(auth)
+            await loadPreferences()
+        } catch let error as APIError where error.isAuthenticationFailure {
+            try? tokenStore.delete(account: account)
+            clearSession()
             phase = .loggedOut
+        } catch {
+            failRecovery(error)
         }
     }
 
     func login(email: String, password: String) async throws {
-        guard let client else {
-            throw PocketBaseError(message: "Invalid server address. Check it and try again.")
-        }
-        apply(try await client.authWithPassword(identity: email, password: password))
-        lastLoginEmail = email
+        let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let auth = try await makeClient().authWithPassword(
+            identity: normalizedEmail,
+            password: password
+        )
+        try apply(auth)
+        lastLoginEmail = normalizedEmail
+        await loadPreferences()
     }
 
     func logout() {
-        Keychain.delete(account: Self.tokenAccount)
-        token = nil
-        user = nil
+        try? tokenStore.delete(account: tokenAccount)
+        try? tokenStore.delete(account: Self.legacyTokenAccount)
+        clearSession()
         phase = .loggedOut
     }
 
-    /// 把新的在线状态写回后端，成功后同步本地记录。
-    func updateStatus(_ status: UserStatus) async {
-        guard let user, let token, let client else { return }
+    func updateStatus(_ status: UserStatus) async throws {
+        guard let user, let token else { return }
+        let requestID = UUID()
+        latestStatusRequestID = requestID
+        let updated = try await makeClient().updateStatus(
+            id: user.id,
+            status: status,
+            token: token
+        )
+        guard latestStatusRequestID == requestID else { return }
+        self.user = updated
+    }
+
+    func updateProfile(_ profile: ProfileUpdate, avatar: AvatarUpload?) async throws {
+        guard let user, let token else { return }
+        self.user = try await makeClient().updateProfile(
+            id: user.id,
+            profile: profile,
+            avatar: avatar,
+            token: token
+        )
+    }
+
+    func changePassword(currentPassword: String, newPassword: String) async throws {
+        guard let user, let token else { return }
+        _ = try await makeClient().changePassword(
+            id: user.id,
+            currentPassword: currentPassword,
+            newPassword: newPassword,
+            token: token
+        )
+
         do {
-            self.user = try await client.updateUser(
-                id: user.id,
-                fields: ["status": status.rawValue],
-                token: token
+            let auth = try await makeClient().authWithPassword(
+                identity: user.email,
+                password: newPassword
             )
+            try apply(auth)
         } catch {
-            // 状态更新失败时保留原状态即可，不打断使用
+            logout()
+            throw APIError.http(
+                statusCode: 401,
+                message: "Your password was updated. Sign in again with your new password.",
+                fieldMessages: [:]
+            )
         }
     }
 
-    private func apply(_ auth: AuthResponse) {
+    func updateAppearance(_ appearance: AppAppearance) async throws {
+        guard let preferences, let token else {
+            fallbackAppearance = appearance
+            throw APIError.http(
+                statusCode: 409,
+                message: "Preferences are not available yet. Try again after reconnecting.",
+                fieldMessages: [:]
+            )
+        }
+        fallbackAppearance = appearance
+        self.preferences = try await makeClient().updatePreferences(
+            id: preferences.id,
+            theme: appearance,
+            token: token
+        )
+        preferencesMessage = nil
+    }
+
+    func updateMemoryEnabled(_ enabled: Bool) async throws {
+        guard let preferences, let token else { return }
+        self.preferences = try await makeClient().updatePreferences(
+            id: preferences.id,
+            memoryEnabled: enabled,
+            token: token
+        )
+        preferencesMessage = nil
+    }
+
+    func updateMemoryAutoCapture(_ enabled: Bool) async throws {
+        guard let preferences, let token else { return }
+        self.preferences = try await makeClient().updatePreferences(
+            id: preferences.id,
+            memoryAutoCapture: enabled,
+            token: token
+        )
+        preferencesMessage = nil
+    }
+
+    func reloadPreferences() async {
+        await loadPreferences()
+    }
+
+    private func makeClient() throws -> PocketBaseClient {
+        try PocketBaseClient(
+            baseURLString: serverAddress,
+            allowInsecureHTTP: allowInsecureHTTP,
+            session: session
+        )
+    }
+
+    private var tokenAccount: String {
+        let identity = (try? ServerConfiguration(
+            address: serverAddress,
+            allowInsecureHTTP: true
+        ).normalizedAddress) ?? serverAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        // URL paths can be case-sensitive, so keep the normalized server identity intact.
+        return Self.tokenAccountPrefix + identity
+    }
+
+    private func apply(_ auth: AuthResponse) throws {
+        try tokenStore.save(auth.token, account: tokenAccount)
         user = auth.record
         token = auth.token
-        Keychain.save(auth.token, account: Self.tokenAccount)
+        recoveryMessage = nil
         phase = .loggedIn
+    }
+
+    private func loadPreferences() async {
+        guard let user, let token else { return }
+        do {
+            let loaded = try await makeClient().getPreferences(ownerID: user.id, token: token)
+            preferences = loaded
+            fallbackAppearance = loaded.theme
+            preferencesMessage = nil
+        } catch {
+            preferencesMessage = error.localizedDescription
+        }
+    }
+
+    private func clearSession() {
+        token = nil
+        user = nil
+        preferences = nil
+        preferencesMessage = nil
+        latestStatusRequestID = nil
+    }
+
+    private func failRecovery(_ error: Error) {
+        recoveryMessage = error.localizedDescription
+        phase = .recoveryFailed
     }
 }

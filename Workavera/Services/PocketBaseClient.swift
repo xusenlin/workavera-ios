@@ -5,99 +5,315 @@ struct AuthResponse: Decodable {
     let record: User
 }
 
-struct PocketBaseError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
+enum APIError: LocalizedError {
+    case invalidResponse
+    case transport(URLError)
+    case http(statusCode: Int, message: String, fieldMessages: [String: String])
+    case decoding(String)
 
-/// 极简 PocketBase HTTP 客户端，只封装本 App 用到的接口。
-struct PocketBaseClient {
-    let baseURL: URL
-
-    init?(baseURLString: String) {
-        let trimmed = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let url = URL(string: trimmed),
-              url.scheme == "http" || url.scheme == "https"
-        else { return nil }
-        baseURL = url
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse:
+            "The server returned an invalid response."
+        case .transport(let error):
+            "Could not reach the server. \(error.localizedDescription)"
+        case .http(_, let message, let fieldMessages):
+            if let first = fieldMessages.sorted(by: { $0.key < $1.key }).first {
+                "\(message) \(first.key): \(first.value)"
+            } else {
+                message
+            }
+        case .decoding:
+            "The server returned data this version of Workavera could not read."
+        }
     }
 
-    // MARK: - Auth
+    var isAuthenticationFailure: Bool {
+        guard case .http(let statusCode, _, _) = self else { return false }
+        return statusCode == 401 || statusCode == 403
+    }
+}
+
+struct PocketBaseClient {
+    let configuration: ServerConfiguration
+    private let session: URLSession
+
+    init(
+        baseURLString: String,
+        allowInsecureHTTP: Bool,
+        session: URLSession = .shared
+    ) throws {
+        configuration = try ServerConfiguration(
+            address: baseURLString,
+            allowInsecureHTTP: allowInsecureHTTP
+        )
+        self.session = session
+    }
 
     func authWithPassword(identity: String, password: String) async throws -> AuthResponse {
-        try await send(
+        struct Body: Encodable {
+            let identity: String
+            let password: String
+        }
+        return try await sendJSON(
             path: "/api/collections/users/auth-with-password",
             method: "POST",
-            body: ["identity": identity, "password": password]
+            body: Body(identity: identity, password: password)
         )
     }
 
     func authRefresh(token: String) async throws -> AuthResponse {
-        try await send(
-            path: "/api/collections/users/auth-refresh",
-            method: "POST",
-            token: token
-        )
+        try await send(path: "/api/collections/users/auth-refresh", method: "POST", token: token)
     }
 
-    func updateUser(id: String, fields: [String: Any], token: String) async throws -> User {
-        try await send(
+    func updateStatus(id: String, status: UserStatus, token: String) async throws -> User {
+        struct Body: Encodable { let status: UserStatus }
+        return try await sendJSON(
             path: "/api/collections/users/records/\(id)",
             method: "PATCH",
-            body: fields,
+            body: Body(status: status),
             token: token
         )
     }
 
-    // MARK: - Files
+    func updateProfile(
+        id: String,
+        profile: ProfileUpdate,
+        avatar: AvatarUpload?,
+        token: String
+    ) async throws -> User {
+        var form = MultipartFormData()
+        form.addField(name: "name", value: profile.name)
+        form.addField(name: "phone", value: profile.phone)
+        form.addField(name: "title", value: profile.title)
+        form.addField(name: "bio", value: profile.bio)
+        form.addField(name: "status", value: profile.status.rawValue)
+        if let avatar {
+            form.addFile(
+                name: "avatar",
+                fileName: avatar.fileName,
+                mimeType: avatar.mimeType,
+                data: avatar.data
+            )
+        }
+        let payload = form.finalize()
+        return try await send(
+            path: "/api/collections/users/records/\(id)",
+            method: "PATCH",
+            body: payload.data,
+            contentType: "multipart/form-data; boundary=\(payload.boundary)",
+            token: token
+        )
+    }
+
+    func changePassword(
+        id: String,
+        currentPassword: String,
+        newPassword: String,
+        token: String
+    ) async throws -> User {
+        struct Body: Encodable {
+            let oldPassword: String
+            let password: String
+            let passwordConfirm: String
+        }
+        return try await sendJSON(
+            path: "/api/collections/users/records/\(id)",
+            method: "PATCH",
+            body: Body(
+                oldPassword: currentPassword,
+                password: newPassword,
+                passwordConfirm: newPassword
+            ),
+            token: token
+        )
+    }
+
+    func getPreferences(ownerID: String, token: String) async throws -> UserPreferences {
+        let response: RecordListResponse<UserPreferences> = try await send(
+            path: "/api/collections/user_preferences/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "filter", value: "owner = \"\(ownerID)\""),
+                URLQueryItem(name: "page", value: "1"),
+                URLQueryItem(name: "perPage", value: "1"),
+            ],
+            token: token
+        )
+        guard let preferences = response.items.first else {
+            throw APIError.http(
+                statusCode: 404,
+                message: "User preferences were not found.",
+                fieldMessages: [:]
+            )
+        }
+        return preferences
+    }
+
+    func updatePreferences(
+        id: String,
+        theme: AppAppearance? = nil,
+        memoryEnabled: Bool? = nil,
+        memoryAutoCapture: Bool? = nil,
+        token: String
+    ) async throws -> UserPreferences {
+        struct Body: Encodable {
+            let theme: String?
+            let memoryEnabled: Bool?
+            let memoryAutoCapture: Bool?
+
+            enum CodingKeys: String, CodingKey {
+                case theme
+                case memoryEnabled = "memory_enabled"
+                case memoryAutoCapture = "memory_auto_capture"
+            }
+        }
+        return try await sendJSON(
+            path: "/api/collections/user_preferences/records/\(id)",
+            method: "PATCH",
+            body: Body(
+                theme: theme?.rawValue,
+                memoryEnabled: memoryEnabled,
+                memoryAutoCapture: memoryAutoCapture
+            ),
+            token: token
+        )
+    }
 
     func fileURL(collectionId: String, recordId: String, fileName: String) -> URL? {
         guard !fileName.isEmpty else { return nil }
-        return baseURL.appending(path: "/api/files/\(collectionId)/\(recordId)/\(fileName)")
+        return configuration.baseURL.appending(
+            path: "/api/files/\(collectionId)/\(recordId)/\(fileName)"
+        )
     }
 
-    // MARK: - Transport
+    private func sendJSON<T: Decodable, Body: Encodable>(
+        path: String,
+        method: String,
+        body: Body,
+        token: String? = nil
+    ) async throws -> T {
+        try await send(
+            path: path,
+            method: method,
+            body: try JSONEncoder().encode(body),
+            contentType: "application/json",
+            token: token
+        )
+    }
 
     private func send<T: Decodable>(
         path: String,
         method: String,
-        body: [String: Any]? = nil,
+        queryItems: [URLQueryItem] = [],
+        body: Data? = nil,
+        contentType: String? = nil,
         token: String? = nil
     ) async throws -> T {
-        var request = URLRequest(url: baseURL.appending(path: path))
+        var components = URLComponents(
+            url: configuration.baseURL.appending(path: path),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let url = components?.url else { throw APIError.invalidResponse }
+
+        var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 15
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token {
             request.setValue(token, forHTTPHeaderField: "Authorization")
         }
         if let body {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.httpBody = body
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await session.data(for: request)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError {
+            throw APIError.transport(error)
         } catch {
-            throw PocketBaseError(message: "Could not reach the server. Check the address and your network. (\(error.localizedDescription))")
+            throw APIError.transport(URLError(.unknown, userInfo: [NSUnderlyingErrorKey: error]))
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw PocketBaseError(message: "The server returned an invalid response.")
+            throw APIError.invalidResponse
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw PocketBaseError(message: Self.errorMessage(from: data, statusCode: http.statusCode))
+            let details = Self.errorDetails(from: data, statusCode: http.statusCode)
+            throw APIError.http(
+                statusCode: http.statusCode,
+                message: details.message,
+                fieldMessages: details.fieldMessages
+            )
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding(error.localizedDescription)
+        }
     }
 
-    private static func errorMessage(from data: Data, statusCode: Int) -> String {
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let message = object["message"] as? String, !message.isEmpty {
-            return message
+    private static func errorDetails(
+        from data: Data,
+        statusCode: Int
+    ) -> (message: String, fieldMessages: [String: String]) {
+        struct FieldError: Decodable { let message: String? }
+        struct ErrorResponse: Decodable {
+            let message: String?
+            let data: [String: FieldError]?
         }
-        return "Request failed (HTTP \(statusCode))."
+        if let response = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+            let fields = response.data?.compactMapValues(\.message) ?? [:]
+            return (
+                response.message?.isEmpty == false ? response.message! : "Request failed (HTTP \(statusCode)).",
+                fields
+            )
+        }
+        return ("Request failed (HTTP \(statusCode)).", [:])
+    }
+}
+
+private struct RecordListResponse<Record: Decodable>: Decodable {
+    let items: [Record]
+}
+
+private struct MultipartFormData {
+    private let boundary = "Workavera-\(UUID().uuidString)"
+    private var data = Data()
+
+    mutating func addField(name: String, value: String) {
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(escaped(name))\"\r\n\r\n")
+        append(value)
+        append("\r\n")
+    }
+
+    mutating func addFile(name: String, fileName: String, mimeType: String, data fileData: Data) {
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(escaped(name))\"; filename=\"\(escaped(fileName))\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        data.append(fileData)
+        append("\r\n")
+    }
+
+    mutating func finalize() -> (data: Data, boundary: String) {
+        append("--\(boundary)--\r\n")
+        return (data, boundary)
+    }
+
+    private mutating func append(_ string: String) {
+        data.append(Data(string.utf8))
+    }
+
+    private func escaped(_ value: String) -> String {
+        value.replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
     }
 }
