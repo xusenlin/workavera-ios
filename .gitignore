@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Xcode user state (per-user, never commit)
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Build artifacts
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Fastlane (if added later)
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Claude Code local settings
+.claude/settings.local.json
