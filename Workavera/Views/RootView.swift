@@ -116,6 +116,8 @@ struct RootView: View {
             DashboardView { selection = $0 }
         case .board:
             BoardView()
+        case .docs:
+            DocsView()
         case .notifications:
             NotificationsView()
         case .profile:
