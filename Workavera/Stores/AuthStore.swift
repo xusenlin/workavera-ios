@@ -289,6 +289,47 @@ final class AuthStore {
         return try await makeClient().getDashboardSummary(token: token)
     }
 
+    func loadDocsPage(
+        view: DocsViewFilter,
+        page: Int,
+        pageSize: Int,
+        query: String
+    ) async throws -> DocsPage {
+        guard let user, let token else { throw sessionUnavailableError }
+        return try await makeClient().getDocsPage(
+            userID: user.id,
+            view: view,
+            page: page,
+            pageSize: pageSize,
+            query: query,
+            token: token
+        )
+    }
+
+    func loadDocument(id: String, pinned: Bool) async throws -> WorkspaceDocument {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getDocument(id: id, pinned: pinned, token: token)
+    }
+
+    func loadDocumentVersions(id: String) async throws -> [DocumentVersion] {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getDocumentVersions(id: id, token: token)
+    }
+
+    func loadDocumentVersion(id: String, revision: Int) async throws -> DocumentVersion {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getDocumentVersion(
+            id: id,
+            revision: revision,
+            token: token
+        )
+    }
+
+    func setDocumentPinned(id: String, pinned: Bool) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().setDocumentPinned(id: id, pinned: pinned, token: token)
+    }
+
     func loadBoardPage(page: Int, pageSize: Int) async throws -> BoardPage {
         guard let user, let token else { throw sessionUnavailableError }
         return try await makeClient().getBoardPage(

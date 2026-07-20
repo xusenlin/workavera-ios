@@ -225,6 +225,132 @@ final class PocketBaseClientTests: XCTestCase {
         try await makeClient().deleteNotification(id: "notice-1", token: "token-value")
     }
 
+    func testDocsFolderPageMatchesWebFiltersSearchAndPagination() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let components = try XCTUnwrap(
+                URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            )
+            let query = Dictionary(
+                uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+            )
+
+            let body: Data
+            switch request.url?.path {
+            case "/api/docs-pinned":
+                XCTAssertEqual(query["query"], "roadmap")
+                body = Data(#"[{"id":"doc-1","title":"Roadmap","kind":"markdown","ownerId":"user-1","folderId":"folder-1","status":"draft","revision":3,"updated":"2026-07-20 08:00:00.000Z"}]"#.utf8)
+
+            case "/api/collections/doc_folders/records":
+                XCTAssertEqual(query["page"], "1")
+                XCTAssertEqual(query["perPage"], "200")
+                XCTAssertNil(query["filter"])
+                XCTAssertEqual(query["sort"], "name")
+                body = Data(#"{"page":1,"totalPages":1,"items":[{"id":"folder-1","name":"Planning"}]}"#.utf8)
+
+            case "/api/collections/board_project_preferences/records":
+                XCTAssertEqual(query["filter"], "user = \"user-1\" && project.archived = false")
+                XCTAssertEqual(query["sort"], "sort_order,id")
+                XCTAssertEqual(query["expand"], "project")
+                body = Data(#"{"page":1,"totalPages":1,"items":[{"id":"pref-1","project":"project-1","sort_order":1024,"expand":{"project":{"id":"project-1","name":"Mobile","owner":"owner-1","archived":false}}}]}"#.utf8)
+
+            case "/api/collections/docs/records":
+                XCTAssertEqual(query["page"], "2")
+                XCTAssertEqual(query["perPage"], "15")
+                XCTAssertEqual(query["sort"], "-updated")
+                XCTAssertEqual(
+                    query["filter"],
+                    "status = \"draft\" && (title ~ \"roadmap\" || content ~ \"roadmap\") && project = \"\" && folder = \"folder-1\""
+                )
+                XCTAssertTrue(query["fields"]?.contains("last_edited_by") == true)
+                body = Data(#"{"page":2,"perPage":15,"totalPages":3,"totalItems":31,"items":[{"id":"doc-1","title":"Roadmap","kind":"markdown","owner":"user-1","project":"","folder":"folder-1","status":"draft","revision":3,"last_edited_by":"user-1","created":"2026-07-19 08:00:00.000Z","updated":"2026-07-20 08:00:00.000Z"}]}"#.utf8)
+
+            default:
+                XCTFail("Unexpected Docs request: \(request.url?.absoluteString ?? "nil")")
+                body = Data(#"{"items":[]}"#.utf8)
+            }
+
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+
+        let page = try await makeClient().getDocsPage(
+            userID: "user-1",
+            view: .folder("folder-1"),
+            page: 2,
+            pageSize: 15,
+            query: "roadmap",
+            token: "token-value"
+        )
+
+        XCTAssertEqual(page.page, 2)
+        XCTAssertEqual(page.totalPages, 3)
+        XCTAssertEqual(page.totalItems, 31)
+        XCTAssertEqual(page.folders, [DocumentFolder(id: "folder-1", name: "Planning")])
+        XCTAssertEqual(page.projects, [DocumentProject(id: "project-1", name: "Mobile")])
+        let document = try XCTUnwrap(page.documents.first)
+        XCTAssertEqual(document.title, "Roadmap")
+        XCTAssertEqual(document.folderID, "folder-1")
+        XCTAssertTrue(document.pinned)
+    }
+
+    func testDocsReadOnlyDetailVersionsAndPinUseBackendRoutes() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let body: Data
+            switch request.url?.path {
+            case "/api/collections/docs/records/doc-1":
+                XCTAssertEqual(request.httpMethod, "GET")
+                body = Data(#"{"id":"doc-1","title":"Architecture","kind":"html","content":"<h1>System</h1>","owner":"user-1","project":"project-1","folder":"","status":"draft","revision":4,"last_edited_by":"user-2","created":"2026-07-18 08:00:00.000Z","updated":"2026-07-20 08:00:00.000Z"}"#.utf8)
+
+            case "/api/docs/doc-1/versions":
+                XCTAssertEqual(request.httpMethod, "GET")
+                body = Data(#"[{"id":"version-4","revision":4,"title":"Architecture","createdBy":"user-2","source":"update","created":"2026-07-20 08:00:00.000Z"}]"#.utf8)
+
+            case "/api/docs/doc-1/versions/4":
+                XCTAssertEqual(request.httpMethod, "GET")
+                body = Data(#"{"id":"version-4","revision":4,"title":"Architecture","content":"<h1>System</h1>","createdBy":"user-2","source":"update","created":"2026-07-20 08:00:00.000Z"}"#.utf8)
+
+            case "/api/docs/doc-1/pin":
+                XCTAssertEqual(request.httpMethod, "POST")
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Bool]
+                )
+                XCTAssertEqual(fields, ["pinned": true])
+                body = Data(#"{"pinned":true}"#.utf8)
+
+            default:
+                XCTFail("Unexpected Docs request: \(request.url?.absoluteString ?? "nil")")
+                body = Data(#"{}"#.utf8)
+            }
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+
+        let client = try makeClient()
+        let document = try await client.getDocument(id: "doc-1", pinned: false, token: "token-value")
+        XCTAssertEqual(document.kind, .html)
+        XCTAssertEqual(document.content, "<h1>System</h1>")
+        XCTAssertEqual(document.projectID, "project-1")
+
+        let versions = try await client.getDocumentVersions(id: "doc-1", token: "token-value")
+        XCTAssertEqual(versions.first?.revision, 4)
+        XCTAssertNil(versions.first?.content)
+
+        let version = try await client.getDocumentVersion(
+            id: "doc-1",
+            revision: 4,
+            token: "token-value"
+        )
+        XCTAssertEqual(version.content, "<h1>System</h1>")
+
+        try await client.setDocumentPinned(id: "doc-1", pinned: true, token: "token-value")
+    }
+
     func testBoardPageUsesFourProjectsPerPageAndAssemblesRelatedRecords() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")

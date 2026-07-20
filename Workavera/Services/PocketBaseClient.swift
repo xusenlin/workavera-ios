@@ -426,6 +426,160 @@ struct PocketBaseClient {
         )
     }
 
+    func getDocsPage(
+        userID: String,
+        view: DocsViewFilter,
+        page: Int,
+        pageSize: Int,
+        query: String,
+        token: String
+    ) async throws -> DocsPage {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let escapedQuery = Self.filterLiteral(normalizedQuery)
+        let pinnedQuery = normalizedQuery.isEmpty
+            ? []
+            : [URLQueryItem(name: "query", value: normalizedQuery)]
+
+        async let pinnedRequest: [PinnedDocumentRecord] = send(
+            path: "/api/docs-pinned",
+            method: "GET",
+            queryItems: pinnedQuery,
+            token: token
+        )
+        async let foldersRequest: [DocumentFolderRecord] = listAllRecords(
+            collection: "doc_folders",
+            filter: "",
+            sort: "name",
+            token: token
+        )
+        async let projectsRequest: [BoardProjectPreferenceRecord] = listAllRecords(
+            collection: "board_project_preferences",
+            filter: "user = \"\(Self.filterLiteral(userID))\" && project.archived = false",
+            sort: "sort_order,id",
+            expand: "project",
+            token: token
+        )
+
+        let listResponse: RecordListResponse<DocumentRecord>?
+        if view == .pinned {
+            listResponse = nil
+        } else {
+            var filters = [view == .archived ? "status = \"archived\"" : "status = \"draft\""]
+            if !escapedQuery.isEmpty {
+                filters.append("(title ~ \"\(escapedQuery)\" || content ~ \"\(escapedQuery)\")")
+            }
+            switch view {
+            case .myDocuments:
+                filters.append("project = \"\"")
+                filters.append("folder = \"\"")
+            case .folder(let id):
+                filters.append("project = \"\"")
+                filters.append("folder = \"\(Self.filterLiteral(id))\"")
+            case .project(let id):
+                filters.append("project = \"\(Self.filterLiteral(id))\"")
+            case .recent, .pinned, .archived:
+                break
+            }
+            let isRecent = view == .recent
+            listResponse = try await send(
+                path: "/api/collections/docs/records",
+                method: "GET",
+                queryItems: [
+                    URLQueryItem(name: "page", value: String(isRecent ? 1 : page)),
+                    URLQueryItem(name: "perPage", value: String(isRecent ? 10 : pageSize)),
+                    URLQueryItem(name: "sort", value: "-updated"),
+                    URLQueryItem(name: "filter", value: filters.joined(separator: " && ")),
+                    URLQueryItem(
+                        name: "fields",
+                        value: "id,title,kind,owner,project,folder,status,revision,last_edited_by,created,updated"
+                    ),
+                ],
+                token: token
+            )
+        }
+
+        let (pinnedRecords, folderRecords, projectPreferences) = try await (
+            pinnedRequest,
+            foldersRequest,
+            projectsRequest
+        )
+        let pinnedIDs = Set(pinnedRecords.map(\.id))
+        let documents: [DocumentSummary]
+        let resolvedPage: Int
+        let totalPages: Int
+        let totalItems: Int
+        if view == .pinned {
+            documents = pinnedRecords.map(Self.documentSummary)
+            resolvedPage = 1
+            totalPages = 1
+            totalItems = documents.count
+        } else if let listResponse {
+            documents = listResponse.items.map {
+                Self.documentSummary($0, pinned: pinnedIDs.contains($0.id))
+            }
+            resolvedPage = view == .recent ? 1 : listResponse.page
+            totalPages = view == .recent ? 1 : max(1, listResponse.totalPages)
+            totalItems = view == .recent ? documents.count : listResponse.totalItems
+        } else {
+            documents = []
+            resolvedPage = 1
+            totalPages = 1
+            totalItems = 0
+        }
+
+        return DocsPage(
+            documents: documents,
+            folders: folderRecords.map { DocumentFolder(id: $0.id, name: $0.name) },
+            projects: projectPreferences.compactMap { preference in
+                guard let project = preference.expand?.project else { return nil }
+                return DocumentProject(id: project.id, name: project.name)
+            },
+            page: resolvedPage,
+            totalPages: totalPages,
+            totalItems: totalItems
+        )
+    }
+
+    func getDocument(id: String, pinned: Bool, token: String) async throws -> WorkspaceDocument {
+        let record: DocumentRecord = try await send(
+            path: "/api/collections/docs/records/\(id)",
+            method: "GET",
+            token: token
+        )
+        return Self.workspaceDocument(record, pinned: pinned)
+    }
+
+    func getDocumentVersions(id: String, token: String) async throws -> [DocumentVersion] {
+        try await send(
+            path: "/api/docs/\(id)/versions",
+            method: "GET",
+            token: token
+        )
+    }
+
+    func getDocumentVersion(
+        id: String,
+        revision: Int,
+        token: String
+    ) async throws -> DocumentVersion {
+        try await send(
+            path: "/api/docs/\(id)/versions/\(revision)",
+            method: "GET",
+            token: token
+        )
+    }
+
+    func setDocumentPinned(id: String, pinned: Bool, token: String) async throws {
+        struct Body: Encodable { let pinned: Bool }
+        struct Response: Decodable { let pinned: Bool }
+        let _: Response = try await sendJSON(
+            path: "/api/docs/\(id)/pin",
+            method: "POST",
+            body: Body(pinned: pinned),
+            token: token
+        )
+    }
+
     func getBoardPage(
         userID: String,
         page: Int,
@@ -580,9 +734,13 @@ struct PocketBaseClient {
             var queryItems = [
                 URLQueryItem(name: "page", value: String(page)),
                 URLQueryItem(name: "perPage", value: "200"),
-                URLQueryItem(name: "filter", value: filter),
-                URLQueryItem(name: "sort", value: sort),
             ]
+            if !filter.isEmpty {
+                queryItems.append(URLQueryItem(name: "filter", value: filter))
+            }
+            if !sort.isEmpty {
+                queryItems.append(URLQueryItem(name: "sort", value: sort))
+            }
             if let expand {
                 queryItems.append(URLQueryItem(name: "expand", value: expand))
             }
@@ -708,6 +866,66 @@ struct PocketBaseClient {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         return formatter.string(from: date)
+    }
+
+    private static func filterLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private static func documentSummary(
+        _ record: DocumentRecord,
+        pinned: Bool
+    ) -> DocumentSummary {
+        DocumentSummary(
+            id: record.id,
+            title: record.title,
+            kind: record.kind,
+            ownerID: record.owner,
+            projectID: record.project.isEmpty ? nil : record.project,
+            folderID: record.folder.isEmpty ? nil : record.folder,
+            status: record.status,
+            revision: record.revision,
+            updatedAt: DocsDate.parse(record.updated),
+            pinned: pinned
+        )
+    }
+
+    private static func documentSummary(_ record: PinnedDocumentRecord) -> DocumentSummary {
+        DocumentSummary(
+            id: record.id,
+            title: record.title,
+            kind: record.kind,
+            ownerID: record.ownerID,
+            projectID: record.projectID,
+            folderID: record.folderID,
+            status: record.status,
+            revision: record.revision,
+            updatedAt: DocsDate.parse(record.updated),
+            pinned: true
+        )
+    }
+
+    private static func workspaceDocument(
+        _ record: DocumentRecord,
+        pinned: Bool
+    ) -> WorkspaceDocument {
+        WorkspaceDocument(
+            id: record.id,
+            title: record.title,
+            kind: record.kind,
+            content: record.content,
+            ownerID: record.owner,
+            projectID: record.project.isEmpty ? nil : record.project,
+            folderID: record.folder.isEmpty ? nil : record.folder,
+            status: record.status,
+            revision: record.revision,
+            lastEditedBy: record.lastEditedBy,
+            createdAt: DocsDate.parse(record.created),
+            updatedAt: DocsDate.parse(record.updated),
+            pinned: pinned
+        )
     }
 
     private static func setRealtimeSubscriptions(

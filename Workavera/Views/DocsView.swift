@@ -1,129 +1,129 @@
 import MarkdownUI
 import SwiftUI
 
-/// 文档页面（只读）：按位置筛选（我的文档 / 一级目录 / 项目 / 已归档），
-/// 列表 + 分页，支持移动位置、归档、二次确认删除（均为本地示例数据操作）。
-/// 当前数据来自 AppDocument.sample，接入 API 后替换为真实数据。
 struct DocsView: View {
-    @State private var documents = AppDocument.sample
-    @State private var filter: DocFilter = .location(.myDocuments)
-    @State private var page = 0
-    @State private var selectedDoc: AppDocument?
-    @State private var docToMove: AppDocument?
-    @State private var docToDelete: AppDocument?
-    @State private var showLocationSheet = false
-
-    private let pageSize = 8
-
-    private var filtered: [AppDocument] {
-        documents.filter { doc in
-            switch filter {
-            case .location(let location):
-                doc.status == .draft && doc.location == location
-            case .archived:
-                doc.status == .archived
-            }
-        }
-        .sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    private var pageCount: Int {
-        max(1, Int(ceil(Double(filtered.count) / Double(pageSize))))
-    }
-
-    private var pageDocuments: [AppDocument] {
-        Array(filtered.dropFirst(page * pageSize).prefix(pageSize))
-    }
-
-    private var locationCounts: [DocFilter: Int] {
-        var counts: [DocFilter: Int] = [.archived: documents.filter { $0.status == .archived }.count]
-        for location in allLocations {
-            counts[.location(location)] = documents.filter { $0.status == .draft && $0.location == location }.count
-        }
-        return counts
-    }
-
-    private var allLocations: [DocLocation] {
-        [.myDocuments]
-            + AppDocument.sampleFolders.map { .folder($0) }
-            + AppDocument.sampleProjects.map { .project($0) }
-    }
+    @Environment(AuthStore.self) private var auth
+    @Environment(DocsStore.self) private var docs
+    @State private var showLocationSwitcher = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                locationHeader
+        Group {
+            if !docs.hasLoaded && docs.isLoading {
+                ProgressView("Loading documents…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
                 documentList
             }
-            .padding(.vertical, 20)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Docs")
-        .navigationDestination(item: $selectedDoc) { doc in
-            DocDetailView(document: doc)
-        }
-        .sheet(isPresented: $showLocationSheet) {
-            LocationSheet(
-                filter: filter,
-                counts: locationCounts,
-                folders: AppDocument.sampleFolders,
-                projects: AppDocument.sampleProjects
-            ) { newFilter in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    filter = newFilter
-                    page = 0
-                }
-            }
-        }
-        .sheet(item: $docToMove) { doc in
-            MoveDocSheet(
-                current: doc.location,
-                folders: AppDocument.sampleFolders,
-                projects: AppDocument.sampleProjects
-            ) { destination in
-                move(doc, to: destination)
-            }
-        }
-        .confirmationDialog(
-            "Delete this document?",
-            isPresented: Binding(
-                get: { docToDelete != nil },
-                set: { if !$0 { docToDelete = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let doc = docToDelete {
-                Button("Delete \"\(doc.title)\"", role: .destructive) {
-                    delete(doc)
-                }
-                Button("Cancel", role: .cancel) {
-                    docToDelete = nil
-                }
-            }
-        } message: {
-            Text("This action cannot be undone.")
-        }
-        .safeAreaInset(edge: .bottom) {
-            if pageCount > 1 {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if docs.view.usesPagination {
                 VStack(spacing: 0) {
                     Divider()
-                    PaginationBar(pageCount: pageCount, page: $page)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
+                    PaginationBar(
+                        pageCount: docs.totalPages,
+                        page: pageBinding,
+                        alwaysVisible: true
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
                 }
                 .background(Color(.systemGroupedBackground))
             }
         }
+        .task(id: auth.user?.id) {
+            await docs.loadIfNeeded(using: auth)
+        }
+        .alert("Could Not Load Documents", isPresented: errorPresented) {
+            Button("OK", role: .cancel) { docs.clearError() }
+        } message: {
+            Text(docs.errorMessage ?? "Unknown error")
+        }
+        .sheet(isPresented: $showLocationSwitcher) {
+            DocsLocationSwitcherSheet(
+                selected: docs.view,
+                folders: docs.folders,
+                projects: docs.projects
+            ) { filter in
+                select(filter)
+            }
+        }
     }
 
-    // MARK: - 当前位置（点按弹出位置切换，与 Board 项目切换一致）
+    private var documentList: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                locationHeader
+
+                if docs.documents.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Documents", systemImage: "doc.text")
+                    } description: {
+                        if let error = docs.errorMessage {
+                            Text(error)
+                        } else {
+                            Text("No documents match this location and search.")
+                        }
+                    } actions: {
+                        Button("Refresh") {
+                            Task { await docs.refresh(using: auth) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding(.vertical, 36)
+                } else {
+                    HStack {
+                        Text(docs.label().uppercased())
+                            .font(.caption2.weight(.semibold))
+                            .tracking(1)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(docs.totalItems) total")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 4)
+
+                    ForEach(docs.documents) { document in
+                        NavigationLink {
+                            DocumentDetailView(documentID: document.id)
+                        } label: {
+                            DocumentRow(
+                                document: document,
+                                location: docs.locationName(for: document)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(16)
+                        .background(
+                            Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        )
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .overlay {
+            if docs.isLoading {
+                ProgressView()
+                    .padding(14)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .scrollBounceBehavior(.always)
+        .refreshable {
+            await docs.refresh(using: auth)
+        }
+    }
 
     private var locationHeader: some View {
         Button {
-            showLocationSheet = true
+            showLocationSwitcher = true
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: filter.icon)
+                Image(systemName: locationIcon)
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 38, height: 38)
@@ -133,10 +133,10 @@ struct DocsView: View {
                     )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(filter.title)
+                    Text(docs.label())
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    Text("\(filtered.count) documents")
+                    Text("\(docs.totalItems) documents")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -155,231 +155,124 @@ struct DocsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 20)
     }
 
-    // MARK: - 文档列表
-
-    @ViewBuilder
-    private var documentList: some View {
-        if pageDocuments.isEmpty {
-            Text("No documents here")
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6]))
-                        .foregroundStyle(Color(.separator))
-                )
-                .padding(.horizontal, 20)
-        } else {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(pageDocuments.enumerated()), id: \.element.id) { index, doc in
-                    if index > 0 {
-                        Divider()
-                            .padding(.leading, 62)
-                    }
-                    row(doc)
-                }
-            }
-            .background(
-                Color(.secondarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-            )
-            .padding(.horizontal, 20)
-        }
-    }
-
-    private func row(_ doc: AppDocument) -> some View {
-        HStack(spacing: 12) {
-            Button {
-                selectedDoc = doc
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: doc.kind.icon)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 34, height: 34)
-                        .background(Color.accentColor.opacity(0.15), in: Circle())
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(doc.title)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        HStack(spacing: 6) {
-                            Label(doc.location.name, systemImage: doc.location.icon)
-                            Text("·")
-                            Text(doc.updatedAt.formatted(.relative(presentation: .named)))
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 4)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Menu {
-                Button {
-                    docToMove = doc
-                } label: {
-                    Label("Move", systemImage: "folder")
-                }
-
-                Button {
-                    toggleArchive(doc)
-                } label: {
-                    if doc.status == .archived {
-                        Label("Unarchive", systemImage: "archivebox")
-                    } else {
-                        Label("Archive", systemImage: "archivebox")
-                    }
-                }
-
-                Divider()
-
-                Button(role: .destructive) {
-                    docToDelete = doc
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: - 本地数据操作（接入 API 后改为调用后端路由）
-
-    private func move(_ doc: AppDocument, to destination: DocLocation) {
-        guard let index = documents.firstIndex(where: { $0.id == doc.id }) else { return }
-        documents[index].location = destination
-    }
-
-    private func toggleArchive(_ doc: AppDocument) {
-        guard let index = documents.firstIndex(where: { $0.id == doc.id }) else { return }
-        documents[index].status = doc.status == .archived ? .draft : .archived
-    }
-
-    private func delete(_ doc: AppDocument) {
-        documents.removeAll { $0.id == doc.id }
-        docToDelete = nil
-    }
-}
-
-// MARK: - 文档详情（只读）
-
-private struct DocDetailView: View {
-    let document: AppDocument
-
-    @State private var htmlHeight: CGFloat = 120
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(document.title)
-                        .font(.title3.bold())
-                    HStack(spacing: 8) {
-                        Label(document.location.name, systemImage: document.location.icon)
-                        Text("·")
-                        Text("v\(document.revision)")
-                        Text("·")
-                        Text(document.updatedAt.formatted(.relative(presentation: .named)))
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
-                Divider()
-
-                switch document.kind {
-                case .markdown:
-                    markdownContent
-                case .html:
-                    htmlContent
-                }
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(Color(.systemGroupedBackground))
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private var markdownContent: some View {
-        Markdown(document.content)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// HTML 文档用 WKWebView 沙箱渲染（禁用 JS 与链接跳转），高度自适应内容。
-    private var htmlContent: some View {
-        HTMLView(html: document.content, contentHeight: $htmlHeight)
-            .frame(height: max(htmlHeight, 1))
-            .frame(maxWidth: .infinity)
-    }
-}
-
-// MARK: - 位置筛选（当前位置 / 已归档）
-
-private enum DocFilter: Hashable {
-    case location(DocLocation)
-    case archived
-
-    var title: String {
-        switch self {
-        case .location(let location): location.name
-        case .archived: "Archived"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .location(let location): location.icon
+    private var locationIcon: String {
+        switch docs.view {
+        case .myDocuments: "tray"
+        case .folder: "folder"
+        case .project: "square.3.layers.3d"
         case .archived: "archivebox"
+        case .recent: "clock"
+        case .pinned: "pin"
         }
+    }
+
+    private var pageBinding: Binding<Int> {
+        Binding(get: { docs.page }, set: { page in
+            Task { await docs.loadPage(page, using: auth) }
+        })
+    }
+
+    private var errorPresented: Binding<Bool> {
+        Binding(
+            get: { docs.errorMessage != nil && !docs.documents.isEmpty },
+            set: { if !$0 { docs.clearError() } }
+        )
+    }
+
+    private func select(_ filter: DocsViewFilter) {
+        Task { await docs.selectView(filter, using: auth) }
     }
 }
 
-// MARK: - 位置切换（个人文档目录缩进一层展示层级）
+private struct DocsLocationSwitcherSheet: View {
+    private static let projectsPerPage = 4
 
-private struct LocationSheet: View {
-    let filter: DocFilter
-    let counts: [DocFilter: Int]
-    let folders: [DocFolder]
-    let projects: [DocProjectRef]
-    let onSelect: (DocFilter) -> Void
+    let selected: DocsViewFilter
+    let folders: [DocumentFolder]
+    let projects: [DocumentProject]
+    let onSelect: (DocsViewFilter) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var projectPage: Int
+
+    init(
+        selected: DocsViewFilter,
+        folders: [DocumentFolder],
+        projects: [DocumentProject],
+        onSelect: @escaping (DocsViewFilter) -> Void
+    ) {
+        self.selected = selected
+        self.folders = folders
+        self.projects = projects
+        self.onSelect = onSelect
+        let selectedProjectID: String?
+        if case .project(let id) = selected {
+            selectedProjectID = id
+        } else {
+            selectedProjectID = nil
+        }
+        let selectedIndex = projects.firstIndex { $0.id == selectedProjectID } ?? 0
+        _projectPage = State(initialValue: selectedIndex / Self.projectsPerPage)
+    }
+
+    private var projectPageCount: Int {
+        max(1, Int(ceil(Double(projects.count) / Double(Self.projectsPerPage))))
+    }
+
+    private var pagedProjects: [DocumentProject] {
+        let start = min(projectPage * Self.projectsPerPage, projects.count)
+        return Array(projects.dropFirst(start).prefix(Self.projectsPerPage))
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    section("Quick Access") {
+                        row(.recent, name: "Recent", icon: "clock")
+                        rowDivider
+                        row(.pinned, name: "Pinned", icon: "pin")
+                    }
+
                     section("Personal") {
-                        row(.location(.myDocuments), name: "My Documents", icon: "tray")
+                        row(.myDocuments, name: "My Documents", icon: "tray")
                         ForEach(folders) { folder in
                             rowDivider
-                            row(.location(.folder(folder)), name: folder.name, icon: "folder", indented: true)
+                            row(
+                                .folder(folder.id),
+                                name: folder.name,
+                                icon: "folder",
+                                indented: true
+                            )
                         }
                     }
 
                     section("Projects") {
-                        ForEach(Array(projects.enumerated()), id: \.element.id) { index, project in
-                            if index > 0 { rowDivider }
-                            row(.location(.project(project)), name: project.name, icon: "square.3.layers.3d")
+                        if projects.isEmpty {
+                            Text("No projects available")
+                                .font(.footnote)
+                                .foregroundStyle(.tertiary)
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ForEach(Array(pagedProjects.enumerated()), id: \.element.id) { index, project in
+                                if index > 0 { rowDivider }
+                                row(
+                                    .project(project.id),
+                                    name: project.name,
+                                    icon: "square.3.layers.3d"
+                                )
+                            }
+                            Divider()
+                            PaginationBar(
+                                pageCount: projectPageCount,
+                                page: $projectPage,
+                                alwaysVisible: true
+                            )
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
                         }
                     }
 
@@ -390,13 +283,16 @@ private struct LocationSheet: View {
                 .padding(20)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Locations")
+            .navigationTitle("Browse Documents")
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
     }
 
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func section<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.headline)
@@ -418,13 +314,12 @@ private struct LocationSheet: View {
     }
 
     private func row(
-        _ value: DocFilter,
+        _ value: DocsViewFilter,
         name: String,
         icon: String,
         indented: Bool = false
     ) -> some View {
-        let isSelected = filter == value
-        return Button {
+        Button {
             onSelect(value)
             dismiss()
         } label: {
@@ -436,16 +331,12 @@ private struct LocationSheet: View {
                 Text(name)
                     .foregroundStyle(.primary)
                 Spacer()
-                Text("\(counts[value] ?? 0)")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.tertiary)
-                if isSelected {
+                if selected == value {
                     Image(systemName: "checkmark")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.accentColor)
                 }
             }
-            // 一级目录向右缩进，体现 "My Documents 下的子层级"
             .padding(.leading, indented ? 40 : 16)
             .padding(.trailing, 16)
             .frame(height: 48)
@@ -455,73 +346,274 @@ private struct LocationSheet: View {
     }
 }
 
-// MARK: - 移动位置
+private struct DocumentRow: View {
+    let document: DocumentSummary
+    let location: String
 
-private struct MoveDocSheet: View {
-    let current: DocLocation
-    let folders: [DocFolder]
-    let projects: [DocProjectRef]
-    let onMove: (DocLocation) -> Void
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: document.kind == .html ? "chevron.left.forwardslash.chevron.right" : "doc.text")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(document.kind == .html ? .purple : Color.accentColor)
+                .frame(width: 38, height: 38)
+                .background(
+                    (document.kind == .html ? Color.purple : Color.accentColor).opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
 
-    @Environment(\.dismiss) private var dismiss
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    if document.pinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(document.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                }
+                Text("\(location) · v\(document.revision)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if document.updatedAt != .distantPast {
+                    Text(document.updatedAt.formatted(.relative(presentation: .named)))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer(minLength: 4)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+private struct DocumentDetailView: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(DocsStore.self) private var docs
+    let documentID: String
+    @State private var showVersions = false
+    @State private var htmlHeight: CGFloat = 120
+
+    private var document: WorkspaceDocument? {
+        docs.documentCache[documentID]
+    }
+
+    var body: some View {
+        Group {
+            if let document {
+                documentContent(document)
+            } else if docs.loadingDocumentIDs.contains(documentID) {
+                ProgressView("Loading document…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView(
+                    "Document Unavailable",
+                    systemImage: "doc.questionmark",
+                    description: Text(docs.errorMessage ?? "This document could not be loaded.")
+                )
+            }
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle(document?.title ?? "Document")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let document {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        showVersions = true
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    .accessibilityLabel("Version history")
+
+                    if document.status == .draft {
+                        Button {
+                            Task { await docs.togglePin(id: document.id, using: auth) }
+                        } label: {
+                            Image(systemName: document.pinned ? "pin.fill" : "pin")
+                        }
+                        .disabled(docs.pinningDocumentIDs.contains(document.id))
+                        .accessibilityLabel(document.pinned ? "Unpin" : "Pin")
+                    }
+                }
+            }
+        }
+        .task {
+            await docs.loadDocument(id: documentID, using: auth)
+        }
+        .sheet(isPresented: $showVersions) {
+            if let document {
+                DocumentVersionsView(document: document)
+            }
+        }
+    }
+
+    private func documentContent(_ document: WorkspaceDocument) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                documentHeader(document)
+                Divider()
+                if document.kind == .html {
+                    HTMLView(html: document.content, contentHeight: $htmlHeight)
+                        .frame(height: max(htmlHeight, 1))
+                        .frame(maxWidth: .infinity)
+                } else {
+                    MarkdownDocumentView(content: document.content)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollBounceBehavior(.always)
+        .refreshable {
+            await docs.loadDocument(id: document.id, using: auth, force: true)
+        }
+    }
+
+    private func documentHeader(_ document: WorkspaceDocument) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(document.kind == .html ? "HTML" : "MARKDOWN")
+                    .font(.caption2.weight(.semibold))
+                    .tracking(0.8)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(.tertiarySystemFill), in: Capsule())
+                if document.status == .archived {
+                    Text("ARCHIVED")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+            Text("\(docs.locationName(for: document)) · Version \(document.revision)")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("Updated \(document.updatedAt.formatted(.relative(presentation: .named)))")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MarkdownDocumentView: View {
+    let content: String
+
+    var body: some View {
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ContentUnavailableView("Empty Document", systemImage: "doc")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 50)
+        } else {
+            Markdown(content)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct DocumentVersionsView: View {
+    @Environment(AuthStore.self) private var auth
+    let document: WorkspaceDocument
+    @State private var versions: [DocumentVersion] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    destinationSection(title: "My Documents", destinations: [.myDocuments] + folders.map { .folder($0) })
-                    destinationSection(title: "Projects", destinations: projects.map { .project($0) })
-                }
-                .padding(20)
-            }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Move Document")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .presentationDetents([.medium])
-    }
-
-    private func destinationSection(title: String, destinations: [DocLocation]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.headline)
-                .padding(.horizontal, 4)
-
-            VStack(spacing: 0) {
-                ForEach(Array(destinations.enumerated()), id: \.element) { index, destination in
-                    if index > 0 {
-                        Divider()
-                            .padding(.leading, 54)
-                    }
-                    Button {
-                        onMove(destination)
-                        dismiss()
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: destination.icon)
-                                .font(.system(size: 15))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 26)
-                            Text(destination.name)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if destination == current {
-                                Image(systemName: "checkmark")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(Color.accentColor)
+            Group {
+                if isLoading {
+                    ProgressView("Loading versions…")
+                } else if versions.isEmpty {
+                    ContentUnavailableView(
+                        "No Version History",
+                        systemImage: "clock.arrow.circlepath",
+                        description: Text(errorMessage ?? "No saved versions are available.")
+                    )
+                } else {
+                    List(versions) { version in
+                        NavigationLink {
+                            DocumentVersionDetailView(
+                                documentID: document.id,
+                                kind: document.kind,
+                                revision: version.revision
+                            )
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Version \(version.revision) · \(version.title)")
+                                    .font(.subheadline.weight(.medium))
+                                Text("\(version.source.capitalized) · \(version.createdAt.formatted(.relative(presentation: .named)))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .frame(height: 48)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .background(
-                Color(.secondarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-            )
+            .navigationTitle("Version History")
+            .navigationBarTitleDisplayMode(.inline)
+            .task {
+                do {
+                    versions = try await auth.loadDocumentVersions(id: document.id)
+                    errorMessage = nil
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                isLoading = false
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+private struct DocumentVersionDetailView: View {
+    @Environment(AuthStore.self) private var auth
+    let documentID: String
+    let kind: DocumentKind
+    let revision: Int
+    @State private var version: DocumentVersion?
+    @State private var errorMessage: String?
+    @State private var htmlHeight: CGFloat = 120
+
+    var body: some View {
+        Group {
+            if let version {
+                if kind == .html {
+                    ScrollView {
+                        HTMLView(
+                            html: version.content ?? "",
+                            contentHeight: $htmlHeight
+                        )
+                        .frame(height: max(htmlHeight, 1))
+                        .frame(maxWidth: .infinity)
+                        .padding(20)
+                    }
+                } else {
+                    ScrollView {
+                        MarkdownDocumentView(content: version.content ?? "")
+                            .padding(20)
+                    }
+                }
+            } else if let errorMessage {
+                ContentUnavailableView(
+                    "Version Unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+            } else {
+                ProgressView("Loading version…")
+            }
+        }
+        .navigationTitle("Version \(revision)")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            do {
+                version = try await auth.loadDocumentVersion(id: documentID, revision: revision)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }
