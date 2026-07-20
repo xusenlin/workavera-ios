@@ -318,6 +318,15 @@ final class AuthStore {
         )
     }
 
+    func updateBoardTaskDueDate(id: String, dueDate: Date?) async throws {
+        guard let token else { throw sessionUnavailableError }
+        _ = try await makeClient().updateBoardTaskDueDate(
+            id: id,
+            dueDate: dueDate,
+            token: token
+        )
+    }
+
     private func makeClient() throws -> PocketBaseClient {
         try PocketBaseClient(
             baseURLString: serverAddress,

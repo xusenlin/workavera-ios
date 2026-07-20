@@ -232,3 +232,13 @@ struct BoardTaskPriorityResponse: Decodable {
     let id: String
     let priority: TaskPriority
 }
+
+struct BoardTaskDueDateResponse: Decodable {
+    let id: String
+    let dueDate: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case dueDate = "due_date"
+    }
+}

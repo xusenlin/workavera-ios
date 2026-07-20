@@ -355,6 +355,56 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertEqual(updated.priority, .urgent)
     }
 
+    func testUpdateBoardTaskDueDateUsesPocketBaseDateField() async throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let dueDate = try XCTUnwrap(formatter.date(from: "2026-07-21T09:30:00.000Z"))
+
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.url?.path, "/api/collections/board_tasks/records/task-1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let fields = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: String]
+            )
+            XCTAssertEqual(fields, ["due_date": "2026-07-21T09:30:00.000Z"])
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"id":"task-1","due_date":"2026-07-21 09:30:00.000Z"}"#.utf8)
+            )
+        }
+
+        let updated = try await makeClient().updateBoardTaskDueDate(
+            id: "task-1",
+            dueDate: dueDate,
+            token: "token-value"
+        )
+
+        XCTAssertEqual(updated.id, "task-1")
+        XCTAssertEqual(updated.dueDate, "2026-07-21 09:30:00.000Z")
+    }
+
+    func testClearBoardTaskDueDateSendsEmptyDateField() async throws {
+        MockURLProtocol.handler = { request in
+            let fields = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: String]
+            )
+            XCTAssertEqual(fields, ["due_date": ""])
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"id":"task-1","due_date":""}"#.utf8)
+            )
+        }
+
+        let updated = try await makeClient().updateBoardTaskDueDate(
+            id: "task-1",
+            dueDate: nil,
+            token: "token-value"
+        )
+
+        XCTAssertEqual(updated.dueDate, "")
+    }
+
     func testNotificationRealtimeHandshakeSubscribesAndDecodesCreateEvent() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/realtime")

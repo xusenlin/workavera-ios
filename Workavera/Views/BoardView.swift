@@ -74,6 +74,9 @@ struct BoardView: View {
                     currentStateID: task.stateID,
                     onPriorityChange: { priority in
                         await board.updatePriority(of: task, to: priority, using: auth)
+                    },
+                    onDueDateChange: { dueDate in
+                        await board.updateDueDate(of: task, to: dueDate, using: auth)
                     }
                 ) { newStateID in
                     Task { await board.moveTask(task, to: newStateID, using: auth) }
@@ -348,25 +351,38 @@ private struct TaskDetailSheet: View {
     let states: [BoardState]
     let currentStateID: String?
     let onPriorityChange: (TaskPriority) async -> Bool
+    let onDueDateChange: (Date?) async -> Bool
     let onMove: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var priority: TaskPriority
     @State private var isUpdatingPriority = false
+    @State private var dueDate: Date?
+    @State private var draftDueDate: Date
+    @State private var isUpdatingDueDate = false
+    @State private var showDueDateEditor = false
 
     init(
         task: BoardTask,
         states: [BoardState],
         currentStateID: String?,
         onPriorityChange: @escaping (TaskPriority) async -> Bool,
+        onDueDateChange: @escaping (Date?) async -> Bool,
         onMove: @escaping (String) -> Void
     ) {
         self.task = task
         self.states = states
         self.currentStateID = currentStateID
         self.onPriorityChange = onPriorityChange
+        self.onDueDateChange = onDueDateChange
         self.onMove = onMove
         _priority = State(initialValue: task.priority)
+        _dueDate = State(initialValue: task.dueDate)
+        _draftDueDate = State(
+            initialValue: task.dueDate
+                ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)
+                ?? .now
+        )
     }
 
     var body: some View {
@@ -396,13 +412,8 @@ private struct TaskDetailSheet: View {
                         stateRow
                         Divider().padding(.leading, 54)
                         priorityRow
-                        if let dueDate = task.dueDate {
-                            Divider().padding(.leading, 54)
-                            infoRow(icon: "calendar", title: "Due Date") {
-                                Text(dueDate.formatted(.dateTime.month(.abbreviated).day().year()))
-                                    .foregroundStyle(task.isOverdue ? .red : .secondary)
-                            }
-                        }
+                        Divider().padding(.leading, 54)
+                        dueDateRow
                         if task.documentCount > 0 {
                             Divider().padding(.leading, 54)
                             infoRow(icon: "doc", title: "Documents") {
@@ -428,6 +439,86 @@ private struct TaskDetailSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
+        .sheet(isPresented: $showDueDateEditor) {
+            dueDateEditor
+        }
+    }
+
+    private var dueDateRow: some View {
+        Button {
+            draftDueDate = dueDate
+                ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)
+                ?? .now
+            showDueDateEditor = true
+        } label: {
+            infoRow(icon: "calendar", title: "Due Date") {
+                HStack(spacing: 5) {
+                    if isUpdatingDueDate {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    if let dueDate {
+                        Text(
+                            dueDate.formatted(
+                                .dateTime.month(.abbreviated).day().year().hour().minute()
+                            )
+                        )
+                        .foregroundStyle(dueDate < .now ? .red : .secondary)
+                    } else {
+                        Text("No due date")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isUpdatingDueDate)
+    }
+
+    private var dueDateEditor: some View {
+        NavigationStack {
+            Form {
+                DatePicker(
+                    "Due date",
+                    selection: $draftDueDate,
+                    displayedComponents: [.date, .hourAndMinute]
+                )
+                .datePickerStyle(.graphical)
+
+                if dueDate != nil {
+                    Button("Clear Due Date", role: .destructive) {
+                        saveDueDate(nil)
+                    }
+                }
+            }
+            .navigationTitle("Due Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showDueDateEditor = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { saveDueDate(draftDueDate) }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func saveDueDate(_ newDueDate: Date?) {
+        let previousDueDate = dueDate
+        dueDate = newDueDate
+        showDueDateEditor = false
+        isUpdatingDueDate = true
+        Task {
+            if !(await onDueDateChange(newDueDate)) {
+                dueDate = previousDueDate
+            }
+            isUpdatingDueDate = false
+        }
     }
 
     private var priorityRow: some View {

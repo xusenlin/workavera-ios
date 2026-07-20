@@ -540,6 +540,26 @@ struct PocketBaseClient {
         )
     }
 
+    func updateBoardTaskDueDate(
+        id: String,
+        dueDate: Date?,
+        token: String
+    ) async throws -> BoardTaskDueDateResponse {
+        struct Body: Encodable {
+            let dueDate: String
+
+            private enum CodingKeys: String, CodingKey {
+                case dueDate = "due_date"
+            }
+        }
+        return try await sendJSON(
+            path: "/api/collections/board_tasks/records/\(id)",
+            method: "PATCH",
+            body: Body(dueDate: dueDate.map(Self.dashboardDate) ?? ""),
+            token: token
+        )
+    }
+
     func fileURL(collectionId: String, recordId: String, fileName: String) -> URL? {
         guard !fileName.isEmpty else { return nil }
         return configuration.baseURL.appending(

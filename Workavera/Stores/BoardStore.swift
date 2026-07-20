@@ -131,6 +131,35 @@ final class BoardStore {
         }
     }
 
+    func updateDueDate(
+        of task: BoardTask,
+        to dueDate: Date?,
+        using auth: AuthStore
+    ) async -> Bool {
+        guard task.dueDate != dueDate,
+              !updatingTaskIDs.contains(task.id),
+              let projectIndex = projects.firstIndex(where: { $0.id == task.projectID }),
+              let stateIndex = projects[projectIndex].states.firstIndex(where: { $0.id == task.stateID }),
+              let taskIndex = projects[projectIndex].states[stateIndex].tasks.firstIndex(where: { $0.id == task.id }) else {
+            return false
+        }
+
+        let previousDueDate = projects[projectIndex].states[stateIndex].tasks[taskIndex].dueDate
+        projects[projectIndex].states[stateIndex].tasks[taskIndex].dueDate = dueDate
+        updatingTaskIDs.insert(task.id)
+        defer { updatingTaskIDs.remove(task.id) }
+
+        do {
+            try await auth.updateBoardTaskDueDate(id: task.id, dueDate: dueDate)
+            errorMessage = nil
+            return true
+        } catch {
+            projects[projectIndex].states[stateIndex].tasks[taskIndex].dueDate = previousDueDate
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func clearError() {
         errorMessage = nil
     }
