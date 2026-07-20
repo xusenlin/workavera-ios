@@ -580,6 +580,46 @@ struct PocketBaseClient {
         )
     }
 
+    func getAPIKeys(token: String) async throws -> [WorkaveraAPIKey] {
+        try await listAllRecords(
+            collection: "api_keys",
+            filter: "",
+            sort: "-created",
+            token: token
+        )
+    }
+
+    func createAPIKey(
+        name: String,
+        expiration: APIKeyExpiration,
+        allowsDestructiveActions: Bool,
+        token: String
+    ) async throws -> CreatedWorkaveraAPIKey {
+        struct Body: Encodable {
+            let name: String
+            let allowDestructive: Bool
+            let expires: String
+        }
+        return try await sendJSON(
+            path: "/api/apikeys",
+            method: "POST",
+            body: Body(
+                name: name,
+                allowDestructive: allowsDestructiveActions,
+                expires: expiration.requestValue()
+            ),
+            token: token
+        )
+    }
+
+    func revokeAPIKey(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/api_keys/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func getBoardPage(
         userID: String,
         page: Int,

@@ -351,6 +351,92 @@ final class PocketBaseClientTests: XCTestCase {
         try await client.setDocumentPinned(id: "doc-1", pinned: true, token: "token-value")
     }
 
+    func testAPIKeysListCreateAndRevokeUseAuthenticatedBackendRoutes() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let body: Data
+            switch request.url?.path {
+            case "/api/collections/api_keys/records":
+                XCTAssertEqual(request.httpMethod, "GET")
+                let components = try XCTUnwrap(
+                    URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+                )
+                let query = Dictionary(
+                    uniqueKeysWithValues: (components.queryItems ?? []).map {
+                        ($0.name, $0.value ?? "")
+                    }
+                )
+                XCTAssertEqual(query["page"], "1")
+                XCTAssertEqual(query["perPage"], "200")
+                XCTAssertEqual(query["sort"], "-created")
+                XCTAssertNil(query["filter"])
+                body = Data(#"{"page":1,"totalPages":1,"items":[{"id":"key-1","name":"Claude Code","prefix":"sk-wa-1234","allow_destructive":true,"expires":"2026-08-20 08:00:00.000Z","last_used":"2026-07-20 08:00:00.000Z","created":"2026-07-19 08:00:00.000Z"}]}"#.utf8)
+
+            case "/api/apikeys":
+                XCTAssertEqual(request.httpMethod, "POST")
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request))
+                        as? [String: Any]
+                )
+                XCTAssertEqual(fields["name"] as? String, "Cursor on laptop")
+                XCTAssertEqual(fields["allowDestructive"] as? Bool, false)
+                let expires = try XCTUnwrap(fields["expires"] as? String)
+                let expirationFormatter = ISO8601DateFormatter()
+                expirationFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                XCTAssertNotNil(expirationFormatter.date(from: expires))
+                body = Data(#"{"id":"key-2","key":"sk-wa-secret","prefix":"sk-wa-secr","name":"Cursor on laptop","allowDestructive":false}"#.utf8)
+
+            case "/api/collections/api_keys/records/key-1":
+                XCTAssertEqual(request.httpMethod, "DELETE")
+                body = Data()
+
+            default:
+                XCTFail("Unexpected API key request: \(request.url?.absoluteString ?? "nil")")
+                body = Data(#"{}"#.utf8)
+            }
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+
+        let client = try makeClient()
+        let keys = try await client.getAPIKeys(token: "token-value")
+        let key = try XCTUnwrap(keys.first)
+        XCTAssertEqual(key.name, "Claude Code")
+        XCTAssertEqual(key.prefix, "sk-wa-1234")
+        XCTAssertTrue(key.allowsDestructiveActions)
+        XCTAssertNotNil(key.expiresAt)
+        XCTAssertNotNil(key.lastUsedAt)
+
+        let created = try await client.createAPIKey(
+            name: "Cursor on laptop",
+            expiration: .thirtyDays,
+            allowsDestructiveActions: false,
+            token: "token-value"
+        )
+        XCTAssertEqual(created.key, "sk-wa-secret")
+        XCTAssertFalse(created.allowsDestructiveActions)
+
+        try await client.revokeAPIKey(id: "key-1", token: "token-value")
+    }
+
+    func testAPIKeyExpirationSupportsNeverAndFixedDurations() throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let now = try XCTUnwrap(formatter.date(from: "2026-07-20T08:00:00.000Z"))
+
+        XCTAssertEqual(APIKeyExpiration.never.requestValue(now: now), "")
+        XCTAssertEqual(
+            APIKeyExpiration.sevenDays.requestValue(now: now),
+            "2026-07-27T08:00:00.000Z"
+        )
+        XCTAssertEqual(
+            APIKeyExpiration.oneYear.requestValue(now: now),
+            "2027-07-20T08:00:00.000Z"
+        )
+    }
+
     func testBoardPageUsesFourProjectsPerPageAndAssemblesRelatedRecords() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")

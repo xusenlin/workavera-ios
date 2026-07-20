@@ -330,6 +330,30 @@ final class AuthStore {
         try await makeClient().setDocumentPinned(id: id, pinned: pinned, token: token)
     }
 
+    func loadAPIKeys() async throws -> [WorkaveraAPIKey] {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getAPIKeys(token: token)
+    }
+
+    func createAPIKey(
+        name: String,
+        expiration: APIKeyExpiration,
+        allowsDestructiveActions: Bool
+    ) async throws -> CreatedWorkaveraAPIKey {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().createAPIKey(
+            name: name,
+            expiration: expiration,
+            allowsDestructiveActions: allowsDestructiveActions,
+            token: token
+        )
+    }
+
+    func revokeAPIKey(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().revokeAPIKey(id: id, token: token)
+    }
+
     func loadBoardPage(page: Int, pageSize: Int) async throws -> BoardPage {
         guard let user, let token else { throw sessionUnavailableError }
         return try await makeClient().getBoardPage(

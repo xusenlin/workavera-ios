@@ -20,11 +20,22 @@ struct SettingsView: View {
             Section {
                 placeholderRow(title: "Model Configurations", icon: "sparkles")
                 placeholderRow(title: "Model Sharing", icon: "square.and.arrow.up")
-                placeholderRow(title: "API Keys", icon: "key")
             } header: {
                 Text("Large Language Model")
             } footer: {
                 Text("Add at least one model configuration to use Chat and AI summaries.")
+            }
+
+            Section {
+                NavigationLink {
+                    APIKeysView()
+                } label: {
+                    Label("API Keys", systemImage: "key")
+                }
+            } header: {
+                Text("Developer")
+            } footer: {
+                Text("Connect third-party MCP clients to your Workavera tools.")
             }
 
             Section {
@@ -107,15 +118,14 @@ struct SettingsView: View {
         } message: {
             Text(errorMessage ?? "Unknown error")
         }
-        .confirmationDialog(
+        .alert(
             "Sign out of Workavera?",
-            isPresented: $confirmSignOut,
-            titleVisibility: .visible
+            isPresented: $confirmSignOut
         ) {
+            Button("Cancel", role: .cancel) {}
             Button("Sign Out", role: .destructive) {
                 auth.logout()
             }
-            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Your session will be removed from this device.")
         }
