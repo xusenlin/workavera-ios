@@ -354,6 +354,41 @@ final class AuthStore {
         try await makeClient().revokeAPIKey(id: id, token: token)
     }
 
+    func loadLLMModels() async throws -> [LLMModelConfiguration] {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getLLMModels(token: token)
+    }
+
+    func createLLMModel(input: LLMModelInput) async throws -> LLMModelConfiguration {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().createLLMModel(input: input, token: token)
+    }
+
+    func updateLLMModel(id: String, input: LLMModelInput) async throws -> LLMModelConfiguration {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().updateLLMModel(id: id, input: input, token: token)
+    }
+
+    func deleteLLMModel(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteLLMModel(id: id, token: token)
+    }
+
+    func setDefaultLLMModel(id: String) async throws -> LLMModelConfiguration {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().setDefaultLLMModel(id: id, token: token)
+    }
+
+    func loadLLMShareTargets() async throws -> [LLMShareTarget] {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getLLMShareTargets(token: token)
+    }
+
+    func shareLLMModel(id: String, userIDs: [String]) async throws -> Int {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().shareLLMModel(id: id, userIDs: userIDs, token: token)
+    }
+
     func loadSavedMemories() async throws -> [SavedChatMemory] {
         guard let token else { throw sessionUnavailableError }
         return try await makeClient().getSavedMemories(token: token)

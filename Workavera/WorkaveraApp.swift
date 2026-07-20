@@ -8,6 +8,7 @@ struct WorkaveraApp: App {
     @State private var dashboard = DashboardStore()
     @State private var docs = DocsStore()
     @State private var calendar = CalendarStore()
+    @State private var llmSettings = LLMSettingsStore()
 
     var body: some Scene {
         WindowGroup {
@@ -30,6 +31,7 @@ struct WorkaveraApp: App {
             .environment(dashboard)
             .environment(docs)
             .environment(calendar)
+            .environment(llmSettings)
             .preferredColorScheme(auth.appearance.colorScheme)
         }
     }

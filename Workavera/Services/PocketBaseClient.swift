@@ -588,6 +588,70 @@ struct PocketBaseClient {
         )
     }
 
+    func getLLMModels(token: String) async throws -> [LLMModelConfiguration] {
+        try await send(path: "/api/llm/models", method: "GET", token: token)
+    }
+
+    func createLLMModel(
+        input: LLMModelInput,
+        token: String
+    ) async throws -> LLMModelConfiguration {
+        try await sendJSON(
+            path: "/api/llm/models",
+            method: "POST",
+            body: input,
+            token: token
+        )
+    }
+
+    func updateLLMModel(
+        id: String,
+        input: LLMModelInput,
+        token: String
+    ) async throws -> LLMModelConfiguration {
+        try await sendJSON(
+            path: "/api/llm/models/\(id)",
+            method: "PATCH",
+            body: input,
+            token: token
+        )
+    }
+
+    func deleteLLMModel(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/llm/models/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    func setDefaultLLMModel(id: String, token: String) async throws -> LLMModelConfiguration {
+        try await send(
+            path: "/api/llm/models/\(id)/default",
+            method: "POST",
+            token: token
+        )
+    }
+
+    func getLLMShareTargets(token: String) async throws -> [LLMShareTarget] {
+        try await send(path: "/api/llm/share-targets", method: "GET", token: token)
+    }
+
+    func shareLLMModel(
+        id: String,
+        userIDs: [String],
+        token: String
+    ) async throws -> Int {
+        struct Body: Encodable { let userIds: [String] }
+        let response: LLMShareResponse = try await sendJSON(
+            path: "/api/llm/models/\(id)/share",
+            method: "POST",
+            body: Body(userIds: userIDs),
+            token: token
+        )
+        return response.shared
+    }
+
     func getSavedMemories(token: String) async throws -> [SavedChatMemory] {
         try await listAllRecords(
             collection: "chat_memories",

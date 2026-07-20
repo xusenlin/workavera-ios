@@ -18,8 +18,16 @@ struct SettingsView: View {
             }
 
             Section {
-                placeholderRow(title: "Model Configurations", icon: "sparkles")
-                placeholderRow(title: "Model Sharing", icon: "square.and.arrow.up")
+                NavigationLink {
+                    ModelConfigurationsView()
+                } label: {
+                    Label("Model Configurations", systemImage: "sparkles")
+                }
+                NavigationLink {
+                    ModelSharingView()
+                } label: {
+                    Label("Model Sharing", systemImage: "square.and.arrow.up")
+                }
             } header: {
                 Text("Large Language Model")
             } footer: {
@@ -139,15 +147,6 @@ struct SettingsView: View {
     private var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         return "v\(version)"
-    }
-
-    private func placeholderRow(title: String, icon: String) -> some View {
-        LabeledContent {
-            Text("In development")
-                .foregroundStyle(.tertiary)
-        } label: {
-            Label(title, systemImage: icon)
-        }
     }
 
     private var appearanceBinding: Binding<AppAppearance> {

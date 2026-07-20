@@ -628,6 +628,114 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertEqual(updated.dueDate, "")
     }
 
+    func testLLMModelManagementAndSharingUseProtectedRoutes() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let response: Data
+
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/api/llm/models"):
+                response = Data(#"[{"id":"model-1","name":"Primary GPT","modelId":"gpt-4o","baseUrl":"https://api.openai.com/v1","protocol":"openai","maxOutputTokens":16384,"maxContextTokens":256000,"isDefault":true,"sharedFrom":"","sharedFromName":"","hasApiKey":true,"created":"2026-07-20 08:00:00.000Z","updated":"2026-07-20 08:00:00.000Z"}]"#.utf8)
+
+            case ("POST", "/api/llm/models"):
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertEqual(fields["name"] as? String, "Claude")
+                XCTAssertEqual(fields["modelId"] as? String, "claude-sonnet-4")
+                XCTAssertEqual(fields["baseUrl"] as? String, "https://api.anthropic.com")
+                XCTAssertEqual(fields["protocol"] as? String, "anthropic")
+                XCTAssertEqual(fields["maxOutputTokens"] as? Int, 32_768)
+                XCTAssertEqual(fields["maxContextTokens"] as? Int, 200_000)
+                XCTAssertEqual(fields["apiKey"] as? String, "secret-value")
+                response = Data(#"{"id":"model-2","name":"Claude","modelId":"claude-sonnet-4","baseUrl":"https://api.anthropic.com","protocol":"anthropic","maxOutputTokens":32768,"maxContextTokens":200000,"isDefault":false,"sharedFrom":"","sharedFromName":"","hasApiKey":true,"created":"2026-07-20 09:00:00.000Z","updated":"2026-07-20 09:00:00.000Z"}"#.utf8)
+
+            case ("PATCH", "/api/llm/models/model-2"):
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertEqual(fields["name"] as? String, "Claude Updated")
+                XCTAssertNil(fields["apiKey"])
+                response = Data(#"{"id":"model-2","name":"Claude Updated","modelId":"claude-sonnet-4","baseUrl":"https://api.anthropic.com","protocol":"anthropic","maxOutputTokens":32768,"maxContextTokens":200000,"isDefault":false,"sharedFrom":"","sharedFromName":"","hasApiKey":true,"created":"2026-07-20 09:00:00.000Z","updated":"2026-07-20 10:00:00.000Z"}"#.utf8)
+
+            case ("POST", "/api/llm/models/model-2/default"):
+                response = Data(#"{"id":"model-2","name":"Claude Updated","modelId":"claude-sonnet-4","baseUrl":"https://api.anthropic.com","protocol":"anthropic","maxOutputTokens":32768,"maxContextTokens":200000,"isDefault":true,"sharedFrom":"","sharedFromName":"","hasApiKey":true,"created":"2026-07-20 09:00:00.000Z","updated":"2026-07-20 10:00:00.000Z"}"#.utf8)
+
+            case ("GET", "/api/llm/share-targets"):
+                response = Data(#"[{"id":"user-2","name":"Ada"},{"id":"user-3","name":"Grace"}]"#.utf8)
+
+            case ("POST", "/api/llm/models/model-2/share"):
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: [String]]
+                )
+                XCTAssertEqual(fields["userIds"], ["user-2", "user-3"])
+                response = Data(#"{"shared":2}"#.utf8)
+
+            case ("DELETE", "/api/llm/models/model-2"):
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+
+            default:
+                XCTFail("Unexpected LLM request: \(request.httpMethod ?? "nil") \(request.url?.absoluteString ?? "nil")")
+                response = Data()
+            }
+
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                response
+            )
+        }
+
+        let client = try makeClient()
+        let listed = try await client.getLLMModels(token: "token-value")
+        XCTAssertEqual(listed.first?.name, "Primary GPT")
+        XCTAssertEqual(listed.first?.protocolType, .openAI)
+        XCTAssertEqual(listed.first?.hasAPIKey, true)
+
+        let createInput = LLMModelInput(
+            name: "Claude",
+            modelID: "claude-sonnet-4",
+            baseURL: "https://api.anthropic.com",
+            protocolType: .anthropic,
+            maxOutputTokens: 32_768,
+            maxContextTokens: 200_000,
+            apiKey: "secret-value"
+        )
+        let created = try await client.createLLMModel(input: createInput, token: "token-value")
+        XCTAssertEqual(created.id, "model-2")
+
+        let updateInput = LLMModelInput(
+            name: "Claude Updated",
+            modelID: createInput.modelID,
+            baseURL: createInput.baseURL,
+            protocolType: createInput.protocolType,
+            maxOutputTokens: createInput.maxOutputTokens,
+            maxContextTokens: createInput.maxContextTokens,
+            apiKey: nil
+        )
+        let updated = try await client.updateLLMModel(
+            id: created.id,
+            input: updateInput,
+            token: "token-value"
+        )
+        XCTAssertEqual(updated.name, "Claude Updated")
+
+        let defaultModel = try await client.setDefaultLLMModel(id: created.id, token: "token-value")
+        XCTAssertTrue(defaultModel.isDefault)
+
+        let targets = try await client.getLLMShareTargets(token: "token-value")
+        XCTAssertEqual(targets.map(\.name), ["Ada", "Grace"])
+        let shared = try await client.shareLLMModel(
+            id: created.id,
+            userIDs: targets.map(\.id),
+            token: "token-value"
+        )
+        XCTAssertEqual(shared, 2)
+        try await client.deleteLLMModel(id: created.id, token: "token-value")
+    }
+
     func testSavedMemoriesCRUDUsesChatMemoriesContract() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
