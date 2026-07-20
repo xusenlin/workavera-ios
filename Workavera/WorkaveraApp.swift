@@ -4,6 +4,8 @@ import SwiftUI
 struct WorkaveraApp: App {
     @State private var auth = AuthStore()
     @State private var notifications = NotificationStore()
+    @State private var board = BoardStore()
+    @State private var dashboard = DashboardStore()
 
     var body: some Scene {
         WindowGroup {
@@ -22,6 +24,8 @@ struct WorkaveraApp: App {
             }
             .environment(auth)
             .environment(notifications)
+            .environment(board)
+            .environment(dashboard)
             .preferredColorScheme(auth.appearance.colorScheme)
         }
     }

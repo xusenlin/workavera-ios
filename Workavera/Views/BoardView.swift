@@ -2,16 +2,16 @@ import SwiftUI
 
 /// 看板页面（移动端布局）：顶部为当前项目卡片（点按切换项目），
 /// 其下为状态 chips 切换 + 全宽任务卡片列表，拖拽移动以详情页内切换状态代替。
-/// 当前数据来自 BoardProject.sample，接入 API 后替换为真实数据。
 struct BoardView: View {
-    @State private var projects = BoardProject.sample
+    @Environment(AuthStore.self) private var auth
+    @Environment(BoardStore.self) private var board
     @State private var selectedProjectID: String?
     @State private var selectedStateID: String?
     @State private var selectedTask: BoardTask?
     @State private var showProjectSwitcher = false
 
     private var selectedProject: BoardProject? {
-        projects.first { $0.id == selectedProjectID } ?? projects.first
+        board.projects.first { $0.id == selectedProjectID } ?? board.projects.first
     }
 
     private var selectedState: BoardState? {
@@ -20,22 +20,45 @@ struct BoardView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let project = selectedProject {
-                    projectHeader(project)
-                    statePicker(project)
-                    taskList
+        Group {
+            if !board.hasLoaded && board.isLoading {
+                ProgressView("Loading board…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if board.projects.isEmpty {
+                ContentUnavailableView {
+                    Label("No Projects", systemImage: "rectangle.split.3x1")
+                } description: {
+                    Text(board.errorMessage ?? "Create or join a project in Workavera to see it here.")
+                } actions: {
+                    Button("Refresh") {
+                        Task { await board.refresh(using: auth) }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
+            } else {
+                boardContent
             }
-            .padding(.vertical, 20)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Board")
+        .task(id: auth.user?.id) {
+            await board.loadIfNeeded(using: auth)
+        }
+        .alert("Could Not Update Board", isPresented: errorPresented) {
+            Button("OK", role: .cancel) { board.clearError() }
+        } message: {
+            Text(board.errorMessage ?? "Unknown error")
+        }
         .sheet(isPresented: $showProjectSwitcher) {
             ProjectSwitcherSheet(
-                projects: projects,
-                selectedID: selectedProject?.id
+                projects: board.projects,
+                selectedID: selectedProject?.id,
+                page: board.page,
+                pageCount: board.totalPages,
+                isLoading: board.isLoading,
+                onPage: { page in
+                    Task { await board.loadPage(page, using: auth) }
+                }
             ) { project in
                 withAnimation(.easeInOut(duration: 0.15)) {
                     selectedProjectID = project.id
@@ -48,11 +71,31 @@ struct BoardView: View {
                 TaskDetailSheet(
                     task: task,
                     states: project.states,
-                    currentStateID: stateID(of: task, in: project)
+                    currentStateID: task.stateID,
+                    onPriorityChange: { priority in
+                        await board.updatePriority(of: task, to: priority, using: auth)
+                    }
                 ) { newStateID in
-                    moveTask(task, to: newStateID)
+                    Task { await board.moveTask(task, to: newStateID, using: auth) }
                 }
             }
+        }
+    }
+
+    private var boardContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let project = selectedProject {
+                    projectHeader(project)
+                    statePicker(project)
+                    taskList
+                }
+            }
+            .padding(.vertical, 20)
+        }
+        .scrollBounceBehavior(.always)
+        .refreshable {
+            await board.refresh(using: auth)
         }
     }
 
@@ -145,20 +188,11 @@ struct BoardView: View {
         }
     }
 
-    // MARK: - 状态变更（本地数据，接入 API 后改为写后端）
-
-    private func stateID(of task: BoardTask, in project: BoardProject) -> String? {
-        project.states.first { $0.tasks.contains { $0.id == task.id } }?.id
-    }
-
-    private func moveTask(_ task: BoardTask, to stateID: String) {
-        guard let p = projects.firstIndex(where: { $0.id == selectedProject?.id }),
-              let from = projects[p].states.firstIndex(where: { $0.tasks.contains { $0.id == task.id } }),
-              let t = projects[p].states[from].tasks.firstIndex(where: { $0.id == task.id }),
-              let to = projects[p].states.firstIndex(where: { $0.id == stateID }),
-              from != to else { return }
-        let moved = projects[p].states[from].tasks.remove(at: t)
-        projects[p].states[to].tasks.append(moved)
+    private var errorPresented: Binding<Bool> {
+        Binding(
+            get: { board.errorMessage != nil && !board.projects.isEmpty },
+            set: { if !$0 { board.clearError() } }
+        )
     }
 }
 
@@ -167,28 +201,27 @@ struct BoardView: View {
 private struct ProjectSwitcherSheet: View {
     let projects: [BoardProject]
     let selectedID: String?
+    let page: Int
+    let pageCount: Int
+    let isLoading: Bool
+    let onPage: (Int) -> Void
     let onSelect: (BoardProject) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var page = 0
-
-    /// 移动端每页展示 2 个项目。
-    private let pageSize = 2
-
-    private var pageCount: Int {
-        max(1, Int(ceil(Double(projects.count) / Double(pageSize))))
-    }
-
-    private var pageProjects: [BoardProject] {
-        Array(projects.dropFirst(page * pageSize).prefix(pageSize))
-    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                Text("SWITCH PROJECT")
+                    .font(.caption.weight(.semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 16)
+                    .padding(.bottom, 4)
+
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(pageProjects) { project in
+                        ForEach(projects) { project in
                             let isSelected = project.id == selectedID
                             Button {
                                 onSelect(project)
@@ -207,19 +240,33 @@ private struct ProjectSwitcherSheet: View {
                     }
                     .padding(20)
                 }
-
-                if pageCount > 1 {
-                    Divider()
-                    PaginationBar(pageCount: pageCount, page: $page)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
+                .overlay {
+                    if isLoading {
+                        ProgressView()
+                            .padding(14)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    }
                 }
+
+                Divider()
+                PaginationBar(
+                    pageCount: max(1, pageCount),
+                    page: pageBinding,
+                    alwaysVisible: true
+                )
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Switch Project")
-            .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var pageBinding: Binding<Int> {
+        Binding(
+            get: { page },
+            set: { onPage($0) }
+        )
     }
 }
 
@@ -300,9 +347,27 @@ private struct TaskDetailSheet: View {
     let task: BoardTask
     let states: [BoardState]
     let currentStateID: String?
+    let onPriorityChange: (TaskPriority) async -> Bool
     let onMove: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var priority: TaskPriority
+    @State private var isUpdatingPriority = false
+
+    init(
+        task: BoardTask,
+        states: [BoardState],
+        currentStateID: String?,
+        onPriorityChange: @escaping (TaskPriority) async -> Bool,
+        onMove: @escaping (String) -> Void
+    ) {
+        self.task = task
+        self.states = states
+        self.currentStateID = currentStateID
+        self.onPriorityChange = onPriorityChange
+        self.onMove = onMove
+        _priority = State(initialValue: task.priority)
+    }
 
     var body: some View {
         NavigationStack {
@@ -330,14 +395,7 @@ private struct TaskDetailSheet: View {
                     VStack(spacing: 0) {
                         stateRow
                         Divider().padding(.leading, 54)
-                        infoRow(icon: "flag", title: "Priority") {
-                            HStack(spacing: 5) {
-                                Circle()
-                                    .fill(task.priority.color)
-                                    .frame(width: 6, height: 6)
-                                Text(task.priority.label)
-                            }
-                        }
+                        priorityRow
                         if let dueDate = task.dueDate {
                             Divider().padding(.leading, 54)
                             infoRow(icon: "calendar", title: "Due Date") {
@@ -368,13 +426,54 @@ private struct TaskDetailSheet: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle(task.title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var priorityRow: some View {
+        Menu {
+            ForEach(TaskPriority.allCases) { option in
+                Button {
+                    guard option != priority, !isUpdatingPriority else { return }
+                    let previousPriority = priority
+                    priority = option
+                    isUpdatingPriority = true
+                    Task {
+                        if !(await onPriorityChange(option)) {
+                            priority = previousPriority
+                        }
+                        isUpdatingPriority = false
+                    }
+                } label: {
+                    Label {
+                        Text(option.label)
+                    } icon: {
+                        if option == priority {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            infoRow(icon: "flag", title: "Priority") {
+                HStack(spacing: 5) {
+                    if isUpdatingPriority {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Circle()
+                            .fill(priority.color)
+                            .frame(width: 6, height: 6)
+                    }
+                    Text(priority.label)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .disabled(isUpdatingPriority)
     }
 
     /// 状态行：菜单选择目标状态，代替移动端的拖拽移动。

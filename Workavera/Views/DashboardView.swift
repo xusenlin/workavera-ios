@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// 工作概览：问候语使用真实用户信息，统计数字为占位。
+/// 工作概览：统计口径与 Web 仪表盘保持一致。
 struct DashboardView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(NotificationStore.self) private var notifications
+    @Environment(DashboardStore.self) private var dashboard
     var onNavigate: ((AppSection) -> Void)? = nil
 
     private let columns = [
@@ -17,10 +18,26 @@ struct DashboardView: View {
                 greetingCard
 
                 LazyVGrid(columns: columns, spacing: 14) {
-                    StatCard(title: "Active Projects", icon: "rectangle.split.3x1")
-                    StatCard(title: "Open Tasks", icon: "checklist")
-                    StatCard(title: "Next 7 Days", icon: "calendar")
-                    StatCard(title: "Unread Reading", icon: "book")
+                    StatCard(
+                        title: "Active Projects",
+                        icon: "rectangle.split.3x1",
+                        value: dashboard.summary?.activeProjects
+                    )
+                    StatCard(
+                        title: "Open Tasks",
+                        icon: "checklist",
+                        value: dashboard.summary?.openTasks
+                    )
+                    StatCard(
+                        title: "Next 7 Days",
+                        icon: "calendar",
+                        value: dashboard.summary?.nextSevenDays
+                    )
+                    StatCard(
+                        title: "Unread Reading",
+                        icon: "book",
+                        value: dashboard.summary?.unreadReading
+                    )
                 }
 
                 quickLinks
@@ -30,8 +47,18 @@ struct DashboardView: View {
         .scrollBounceBehavior(.always)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Dashboard")
+        .task(id: auth.user?.id) {
+            await dashboard.loadIfNeeded(using: auth)
+        }
         .refreshable {
-            await notifications.refresh(using: auth)
+            async let dashboardRefresh: Void = dashboard.refresh(using: auth)
+            async let notificationRefresh: Void = notifications.refresh(using: auth)
+            _ = await (dashboardRefresh, notificationRefresh)
+        }
+        .alert("Could Not Update Dashboard", isPresented: errorPresented) {
+            Button("OK", role: .cancel) { dashboard.clearError() }
+        } message: {
+            Text(dashboard.errorMessage ?? "Unknown error")
         }
     }
 
@@ -78,7 +105,7 @@ struct DashboardView: View {
                 .padding(.horizontal, 4)
 
             VStack(spacing: 0) {
-                ForEach(Array([AppSection.chat, .board, .calendar, .reading].enumerated()), id: \.element) { index, section in
+                ForEach(Array([AppSection.chat, .board, .docs, .calendar, .reading].enumerated()), id: \.element) { index, section in
                     if index > 0 {
                         Divider()
                             .padding(.leading, 54)
@@ -111,11 +138,19 @@ struct DashboardView: View {
             )
         }
     }
+
+    private var errorPresented: Binding<Bool> {
+        Binding(
+            get: { dashboard.errorMessage != nil },
+            set: { if !$0 { dashboard.clearError() } }
+        )
+    }
 }
 
 private struct StatCard: View {
     let title: String
     let icon: String
+    let value: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -125,7 +160,7 @@ private struct StatCard: View {
                 .frame(width: 32, height: 32)
                 .background(Color(.tertiarySystemFill), in: Circle())
 
-            Text("—")
+            Text(value.map(String.init) ?? "—")
                 .font(.system(size: 28, weight: .bold))
 
             Text(title)

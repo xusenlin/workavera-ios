@@ -267,11 +267,462 @@ struct PocketBaseClient {
         )
     }
 
+    func notificationRealtimeEvents(
+        token: String
+    ) -> AsyncThrowingStream<NotificationRealtimeEvent, Error> {
+        let realtimeURL = configuration.baseURL.appending(path: "/api/realtime")
+        let session = session
+
+        return AsyncThrowingStream { continuation in
+            let streamTask = Task {
+                do {
+                    var request = URLRequest(url: realtimeURL)
+                    request.httpMethod = "GET"
+                    request.timeoutInterval = 35 * 60
+                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw APIError.invalidResponse
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        throw APIError.http(
+                            statusCode: http.statusCode,
+                            message: "Could not connect to realtime notifications.",
+                            fieldMessages: [:]
+                        )
+                    }
+
+                    func dispatchFrame(_ frame: Data) async throws {
+                        let text = String(decoding: frame, as: UTF8.self)
+                        var eventName = ""
+                        var dataLines: [String] = []
+                        for rawLine in text.split(whereSeparator: \.isNewline) {
+                            let line = String(rawLine)
+                            if line.hasPrefix("event:") {
+                                eventName = String(line.dropFirst("event:".count))
+                                    .trimmingCharacters(in: .whitespaces)
+                            } else if line.hasPrefix("data:") {
+                                dataLines.append(
+                                    String(line.dropFirst("data:".count))
+                                        .trimmingCharacters(in: .whitespaces)
+                                )
+                            }
+                        }
+                        guard !eventName.isEmpty else { return }
+                        let data = Data(dataLines.joined(separator: "\n").utf8)
+                        if eventName == "PB_CONNECT" {
+                            struct Connection: Decodable { let clientId: String }
+                            let connection = try JSONDecoder().decode(Connection.self, from: data)
+                            try await Self.setRealtimeSubscriptions(
+                                clientID: connection.clientId,
+                                topics: ["notifications/*"],
+                                token: token,
+                                url: realtimeURL,
+                                session: session
+                            )
+                        } else if eventName.hasPrefix("notifications") {
+                            let event = try JSONDecoder().decode(NotificationRealtimeEvent.self, from: data)
+                            continuation.yield(event)
+                        }
+                    }
+
+                    var frameBytes: [UInt8] = []
+                    for try await byte in bytes {
+                        try Task.checkCancellation()
+                        frameBytes.append(byte)
+                        let delimiterLength: Int
+                        if frameBytes.suffix(4).elementsEqual([13, 10, 13, 10]) {
+                            delimiterLength = 4
+                        } else if frameBytes.suffix(2).elementsEqual([10, 10]) {
+                            delimiterLength = 2
+                        } else {
+                            if frameBytes.count > 1_048_576 {
+                                throw APIError.invalidResponse
+                            }
+                            continue
+                        }
+                        frameBytes.removeLast(delimiterLength)
+                        try await dispatchFrame(Data(frameBytes))
+                        frameBytes.removeAll(keepingCapacity: true)
+                    }
+                    if !frameBytes.isEmpty {
+                        try await dispatchFrame(Data(frameBytes))
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in streamTask.cancel() }
+        }
+    }
+
+    func getDashboardSummary(now: Date = .now, token: String) async throws -> DashboardSummary {
+        let nextWeek = Calendar(identifier: .gregorian).date(
+            byAdding: .day,
+            value: 7,
+            to: now
+        ) ?? now.addingTimeInterval(7 * 24 * 60 * 60)
+        let nowValue = Self.dashboardDate(now)
+        let nextWeekValue = Self.dashboardDate(nextWeek)
+        let openTaskFilter = "state.category != \"completed\""
+
+        async let projects: RecordListResponse<RecordIDOnly> = send(
+            path: "/api/collections/board_projects/records",
+            method: "GET",
+            queryItems: Self.countQuery(filter: "archived = false"),
+            token: token
+        )
+        async let tasks: RecordListResponse<RecordIDOnly> = send(
+            path: "/api/collections/board_tasks/records",
+            method: "GET",
+            queryItems: Self.countQuery(filter: openTaskFilter),
+            token: token
+        )
+        async let events: RecordListResponse<RecordIDOnly> = send(
+            path: "/api/collections/calendar_events/records",
+            method: "GET",
+            queryItems: Self.countQuery(
+                filter: "start_at >= \"\(nowValue)\" && start_at < \"\(nextWeekValue)\""
+            ),
+            token: token
+        )
+        async let upcomingTasks: RecordListResponse<RecordIDOnly> = send(
+            path: "/api/collections/board_tasks/records",
+            method: "GET",
+            queryItems: Self.countQuery(
+                filter: "\(openTaskFilter) && due_date >= \"\(nowValue)\" && due_date < \"\(nextWeekValue)\""
+            ),
+            token: token
+        )
+        async let reading: RecordListResponse<RecordIDOnly> = send(
+            path: "/api/collections/reading_items/records",
+            method: "GET",
+            queryItems: Self.countQuery(filter: "status = \"unread\""),
+            token: token
+        )
+
+        let (projectResult, taskResult, eventResult, upcomingTaskResult, readingResult) = try await (
+            projects,
+            tasks,
+            events,
+            upcomingTasks,
+            reading
+        )
+        return DashboardSummary(
+            activeProjects: projectResult.totalItems,
+            openTasks: taskResult.totalItems,
+            nextSevenDays: eventResult.totalItems + upcomingTaskResult.totalItems,
+            unreadReading: readingResult.totalItems,
+            loadedAt: now
+        )
+    }
+
+    func getBoardPage(
+        userID: String,
+        page: Int,
+        pageSize: Int,
+        token: String
+    ) async throws -> BoardPage {
+        let preferences: RecordListResponse<BoardProjectPreferenceRecord> = try await send(
+            path: "/api/collections/board_project_preferences/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "perPage", value: String(pageSize)),
+                URLQueryItem(name: "sort", value: "sort_order,id"),
+                URLQueryItem(name: "expand", value: "project,project.owner"),
+                URLQueryItem(
+                    name: "filter",
+                    value: "user = \"\(userID)\" && project.archived = false"
+                ),
+            ],
+            token: token
+        )
+        let projectRecords = preferences.items.compactMap(\.expand?.project)
+        let projectIDs = projectRecords.map(\.id)
+        guard !projectIDs.isEmpty else {
+            return BoardPage(
+                projects: [],
+                page: preferences.page,
+                totalPages: max(1, preferences.totalPages),
+                totalItems: preferences.totalItems
+            )
+        }
+
+        let filter = Self.projectFilter(projectIDs)
+        async let statesRequest: [BoardStateRecord] = listAllRecords(
+            collection: "board_project_states",
+            filter: filter,
+            sort: "sort_order",
+            token: token
+        )
+        async let tasksRequest: [BoardTaskRecord] = listAllRecords(
+            collection: "board_tasks",
+            filter: filter,
+            sort: "rank",
+            token: token
+        )
+        async let labelsRequest: [BoardLabelRecord] = listAllRecords(
+            collection: "board_project_labels",
+            filter: filter,
+            sort: "name",
+            token: token
+        )
+        async let membersRequest: [BoardMemberRecord] = listAllRecords(
+            collection: "board_project_members",
+            filter: filter,
+            sort: "created",
+            expand: "user",
+            token: token
+        )
+        let (stateRecords, taskRecords, labelRecords, memberRecords) = try await (
+            statesRequest,
+            tasksRequest,
+            labelsRequest,
+            membersRequest
+        )
+
+        let projects = Self.assembleBoardProjects(
+            projects: projectRecords,
+            states: stateRecords,
+            tasks: taskRecords,
+            labels: labelRecords,
+            members: memberRecords
+        )
+        return BoardPage(
+            projects: projects,
+            page: preferences.page,
+            totalPages: max(1, preferences.totalPages),
+            totalItems: preferences.totalItems
+        )
+    }
+
+    func moveBoardTask(
+        id: String,
+        stateID: String,
+        rank: Double,
+        token: String
+    ) async throws -> BoardTaskMoveResponse {
+        struct Body: Encodable {
+            let state: String
+            let rank: Double
+        }
+        return try await sendJSON(
+            path: "/api/collections/board_tasks/records/\(id)",
+            method: "PATCH",
+            body: Body(state: stateID, rank: rank),
+            token: token
+        )
+    }
+
+    func updateBoardTaskPriority(
+        id: String,
+        priority: TaskPriority,
+        token: String
+    ) async throws -> BoardTaskPriorityResponse {
+        struct Body: Encodable {
+            let priority: TaskPriority
+        }
+        return try await sendJSON(
+            path: "/api/collections/board_tasks/records/\(id)",
+            method: "PATCH",
+            body: Body(priority: priority),
+            token: token
+        )
+    }
+
     func fileURL(collectionId: String, recordId: String, fileName: String) -> URL? {
         guard !fileName.isEmpty else { return nil }
         return configuration.baseURL.appending(
             path: "/api/files/\(collectionId)/\(recordId)/\(fileName)"
         )
+    }
+
+    private func listAllRecords<Record: Decodable>(
+        collection: String,
+        filter: String,
+        sort: String,
+        expand: String? = nil,
+        token: String
+    ) async throws -> [Record] {
+        var page = 1
+        var records: [Record] = []
+        while true {
+            var queryItems = [
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "perPage", value: "200"),
+                URLQueryItem(name: "filter", value: filter),
+                URLQueryItem(name: "sort", value: sort),
+            ]
+            if let expand {
+                queryItems.append(URLQueryItem(name: "expand", value: expand))
+            }
+            let response: RecordListResponse<Record> = try await send(
+                path: "/api/collections/\(collection)/records",
+                method: "GET",
+                queryItems: queryItems,
+                token: token
+            )
+            records.append(contentsOf: response.items)
+            if page >= response.totalPages { return records }
+            page += 1
+        }
+    }
+
+    private static func projectFilter(_ projectIDs: [String]) -> String {
+        projectIDs.map { "project = \"\($0)\"" }.joined(separator: " || ")
+    }
+
+    private static func assembleBoardProjects(
+        projects: [BoardProjectRecord],
+        states: [BoardStateRecord],
+        tasks: [BoardTaskRecord],
+        labels: [BoardLabelRecord],
+        members: [BoardMemberRecord]
+    ) -> [BoardProject] {
+        let boardLabels = labels.map {
+            BoardLabel(id: $0.id, projectID: $0.project, name: $0.name, color: $0.color)
+        }
+        let labelsByID = Dictionary(uniqueKeysWithValues: boardLabels.map { ($0.id, $0) })
+
+        var membersByProject: [String: [BoardMember]] = [:]
+        var membersByUserID: [String: BoardMember] = [:]
+        for project in projects {
+            let owner = BoardMember(
+                id: project.owner,
+                name: project.expand?.owner?.displayName ?? "Project owner"
+            )
+            membersByProject[project.id, default: []].append(owner)
+            membersByUserID[owner.id] = owner
+        }
+        for record in members {
+            let member = BoardMember(
+                id: record.user,
+                name: record.expand?.user?.displayName ?? "Unknown member"
+            )
+            guard membersByProject[record.project]?.contains(where: { $0.id == member.id }) != true else {
+                continue
+            }
+            membersByProject[record.project, default: []].append(member)
+            membersByUserID[member.id] = member
+        }
+
+        var tasksByState: [String: [BoardTask]] = [:]
+        for record in tasks {
+            let task = BoardTask(
+                id: record.id,
+                projectID: record.project,
+                stateID: record.state,
+                title: record.title,
+                description: record.description,
+                priority: record.priority,
+                dueDate: boardDate(record.dueDate),
+                labels: record.labelIDs.compactMap { labelsByID[$0] },
+                assignees: record.assigneeIDs.map {
+                    membersByUserID[$0] ?? BoardMember(id: $0, name: "Unknown member")
+                },
+                documentCount: record.documentIDs.count,
+                rank: record.rank
+            )
+            tasksByState[record.state, default: []].append(task)
+        }
+
+        var statesByProject: [String: [BoardState]] = [:]
+        for record in states {
+            statesByProject[record.project, default: []].append(
+                BoardState(
+                    id: record.id,
+                    projectID: record.project,
+                    name: record.name,
+                    color: record.color,
+                    category: record.category,
+                    sortOrder: record.sortOrder,
+                    tasks: (tasksByState[record.id] ?? []).sorted { $0.rank < $1.rank }
+                )
+            )
+        }
+
+        return projects.map { project in
+            BoardProject(
+                id: project.id,
+                ownerID: project.owner,
+                name: project.name,
+                description: project.description,
+                members: membersByProject[project.id] ?? [],
+                labels: boardLabels.filter { $0.projectID == project.id },
+                states: (statesByProject[project.id] ?? []).sorted { $0.sortOrder < $1.sortOrder }
+            )
+        }
+    }
+
+    private static func boardDate(_ value: String) -> Date? {
+        guard !value.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSXXXXX"
+        return formatter.date(from: value)
+    }
+
+    private static func countQuery(filter: String) -> [URLQueryItem] {
+        [
+            URLQueryItem(name: "page", value: "1"),
+            URLQueryItem(name: "perPage", value: "1"),
+            URLQueryItem(name: "fields", value: "id"),
+            URLQueryItem(name: "filter", value: filter),
+        ]
+    }
+
+    private static func dashboardDate(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter.string(from: date)
+    }
+
+    private static func setRealtimeSubscriptions(
+        clientID: String,
+        topics: [String],
+        token: String,
+        url: URL,
+        session: URLSession
+    ) async throws {
+        struct Body: Encodable {
+            let clientId: String
+            let subscriptions: [String]
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(token, forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(
+            Body(clientId: clientID, subscriptions: topics)
+        )
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let details = errorDetails(from: data, statusCode: http.statusCode)
+            throw APIError.http(
+                statusCode: http.statusCode,
+                message: details.message,
+                fieldMessages: details.fieldMessages
+            )
+        }
     }
 
     private func sendJSON<T: Decodable, Body: Encodable>(
@@ -410,6 +861,10 @@ private struct RecordListResponse<Record: Decodable>: Decodable {
         totalPages = try container.decodeIfPresent(Int.self, forKey: .totalPages) ?? 1
         totalItems = try container.decodeIfPresent(Int.self, forKey: .totalItems) ?? items.count
     }
+}
+
+private struct RecordIDOnly: Decodable {
+    let id: String
 }
 
 private struct NotificationMutationResponse: Decodable {}

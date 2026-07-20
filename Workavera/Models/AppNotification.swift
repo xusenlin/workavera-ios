@@ -154,3 +154,20 @@ struct NotificationPage: Equatable {
     let totalPages: Int
     let totalItems: Int
 }
+
+enum NotificationRealtimeAction: String, Decodable, Equatable {
+    case create
+    case update
+    case delete
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: value) ?? .unknown
+    }
+}
+
+struct NotificationRealtimeEvent: Decodable, Equatable {
+    let action: NotificationRealtimeAction
+    let record: AppNotification
+}

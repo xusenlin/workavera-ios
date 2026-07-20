@@ -279,6 +279,45 @@ final class AuthStore {
         try await makeClient().deleteNotification(id: id, token: token)
     }
 
+    func notificationRealtimeEvents() throws -> AsyncThrowingStream<NotificationRealtimeEvent, Error> {
+        guard let token else { throw sessionUnavailableError }
+        return try makeClient().notificationRealtimeEvents(token: token)
+    }
+
+    func loadDashboardSummary() async throws -> DashboardSummary {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getDashboardSummary(token: token)
+    }
+
+    func loadBoardPage(page: Int, pageSize: Int) async throws -> BoardPage {
+        guard let user, let token else { throw sessionUnavailableError }
+        return try await makeClient().getBoardPage(
+            userID: user.id,
+            page: page,
+            pageSize: pageSize,
+            token: token
+        )
+    }
+
+    func moveBoardTask(id: String, stateID: String, rank: Double) async throws {
+        guard let token else { throw sessionUnavailableError }
+        _ = try await makeClient().moveBoardTask(
+            id: id,
+            stateID: stateID,
+            rank: rank,
+            token: token
+        )
+    }
+
+    func updateBoardTaskPriority(id: String, priority: TaskPriority) async throws {
+        guard let token else { throw sessionUnavailableError }
+        _ = try await makeClient().updateBoardTaskPriority(
+            id: id,
+            priority: priority,
+            token: token
+        )
+    }
+
     private func makeClient() throws -> PocketBaseClient {
         try PocketBaseClient(
             baseURLString: serverAddress,
