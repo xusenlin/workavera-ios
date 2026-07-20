@@ -59,6 +59,178 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertTrue(preferences.memoryEnabled)
     }
 
+    func testContactsCombineUsersWithFavoriteRecordsAndAvatarURLs() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let body: Data
+            switch request.url?.path {
+            case "/api/collections/users/records":
+                body = Data(#"{"page":1,"totalPages":1,"items":[{"id":"user-2","collectionId":"_pb_users_auth_","name":"Ada","email":"ada@example.com","avatar":"ada.png","phone":"","title":"Designer","bio":"Calm interfaces","status":"online"}]}"#.utf8)
+            case "/api/collections/contact_favorites/records":
+                let components = try XCTUnwrap(
+                    URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+                )
+                XCTAssertEqual(
+                    components.queryItems?.first(where: { $0.name == "filter" })?.value,
+                    "owner = \"user-1\""
+                )
+                body = Data(#"{"page":1,"totalPages":1,"items":[{"id":"favorite-1","owner":"user-1","contact":"user-2"}]}"#.utf8)
+            default:
+                XCTFail("Unexpected contacts request: \(request.url?.absoluteString ?? "nil")")
+                body = Data(#"{"items":[]}"#.utf8)
+            }
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+
+        let snapshot = try await makeClient().getContacts(ownerID: "user-1", token: "token-value")
+
+        XCTAssertEqual(snapshot.contacts.map(\.id), ["user-2"])
+        XCTAssertEqual(snapshot.contacts.first?.status, .online)
+        XCTAssertEqual(snapshot.contacts.first?.isFavorite, true)
+        XCTAssertEqual(snapshot.contacts.first?.avatarURL?.path, "/api/files/_pb_users_auth_/user-2/ada.png")
+        XCTAssertEqual(snapshot.favoriteRecordIDs["user-2"], "favorite-1")
+    }
+
+    func testContactFavoriteCreateAndDeleteUseRelationCollection() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            XCTAssertEqual(request.url?.path.hasPrefix("/api/collections/contact_favorites/records"), true)
+            if request.httpMethod == "POST" {
+                let body = try Self.bodyData(from: request)
+                XCTAssertEqual(
+                    try JSONSerialization.jsonObject(with: body) as? [String: String],
+                    ["owner": "user-1", "contact": "user-2"]
+                )
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(#"{"id":"favorite-1","owner":"user-1","contact":"user-2"}"#.utf8)
+                )
+            }
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.url?.path, "/api/collections/contact_favorites/records/favorite-1")
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                Data()
+            )
+        }
+        let client = try makeClient()
+
+        let favorite = try await client.createContactFavorite(
+            ownerID: "user-1",
+            contactID: "user-2",
+            token: "token-value"
+        )
+        try await client.deleteContactFavorite(id: favorite.id, token: "token-value")
+
+        XCTAssertEqual(favorite.id, "favorite-1")
+    }
+
+    func testReadingPageUsesBackendFiltersPaginationAndUnreadCount() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/collections/reading_items/records")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let components = try XCTUnwrap(
+                URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            )
+            let query = Dictionary(
+                uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+            )
+            let body: Data
+            if query["perPage"] == "1" {
+                XCTAssertEqual(query["filter"], "status = \"unread\"")
+                body = Data(#"{"page":1,"totalPages":1,"totalItems":3,"items":[]}"#.utf8)
+            } else {
+                XCTAssertEqual(query["page"], "2")
+                XCTAssertEqual(query["perPage"], "6")
+                XCTAssertEqual(query["sort"], "-pinned,-updated")
+                XCTAssertTrue(query["filter"]?.contains("status != \"archived\"") == true)
+                XCTAssertTrue(query["filter"]?.contains("pinned = true") == true)
+                XCTAssertTrue(query["filter"]?.contains("title ~ \"Swift\"") == true)
+                body = Data(#"{"page":2,"totalPages":4,"totalItems":19,"items":[{"id":"reading-1","owner":"user-1","project":"","url":"https://example.com/swift","title":"Swift Concurrency","description":"Actors","tags":["swift"],"status":"unread","pinned":true,"summary":"Summary","key_points":["Use actors"],"summary_language":"English","created":"2026-07-20 08:00:00.000Z","updated":"2026-07-20 09:00:00.000Z"}]}"#.utf8)
+            }
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+
+        let page = try await makeClient().getReadingPage(
+            filter: .pinned,
+            page: 2,
+            pageSize: 6,
+            query: "Swift",
+            token: "token-value"
+        )
+
+        XCTAssertEqual(page.page, 2)
+        XCTAssertEqual(page.totalPages, 4)
+        XCTAssertEqual(page.totalItems, 19)
+        XCTAssertEqual(page.unreadCount, 3)
+        XCTAssertEqual(page.items.first?.host, "example.com")
+        XCTAssertEqual(page.items.first?.pinned, true)
+    }
+
+    func testCreateReadingItemSendsOwnerAndRealCollectionFields() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/collections/reading_items/records")
+            let body = try Self.bodyData(from: request)
+            let payload = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: body) as? [String: Any]
+            )
+            XCTAssertEqual(payload["owner"] as? String, "user-1")
+            XCTAssertEqual(payload["url"] as? String, "https://example.com/article")
+            XCTAssertEqual(payload["title"] as? String, "Article")
+            XCTAssertEqual(payload["status"] as? String, "unread")
+            XCTAssertEqual(payload["tags"] as? [String], ["ios", "swift"])
+            let response = Data(#"{"id":"reading-1","owner":"user-1","project":"","url":"https://example.com/article","title":"Article","description":"Description","tags":["ios","swift"],"status":"unread","pinned":false,"created":"2026-07-20 08:00:00.000Z","updated":"2026-07-20 08:00:00.000Z"}"#.utf8)
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                response
+            )
+        }
+
+        let item = try await makeClient().createReadingItem(
+            ownerID: "user-1",
+            input: ReadingItemInput(
+                url: "https://example.com/article",
+                title: "Article",
+                description: "Description",
+                tags: ["ios", "swift"]
+            ),
+            token: "token-value"
+        )
+
+        XCTAssertEqual(item.id, "reading-1")
+        XCTAssertEqual(item.status, .unread)
+    }
+
+    func testReadingPinUsesProtectedBackendEndpoint() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/reading/items/reading-1/pin")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let body = try Self.bodyData(from: request)
+            XCTAssertEqual(
+                try JSONSerialization.jsonObject(with: body) as? [String: Bool],
+                ["pinned": true]
+            )
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"ok":true}"#.utf8)
+            )
+        }
+
+        try await makeClient().setReadingPinned(
+            id: "reading-1",
+            pinned: true,
+            token: "token-value"
+        )
+    }
+
     func testNotificationsDecodePocketBaseFieldsAndPagination() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")

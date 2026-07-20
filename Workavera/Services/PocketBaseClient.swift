@@ -224,6 +224,215 @@ struct PocketBaseClient {
         )
     }
 
+    func getContacts(ownerID: String, token: String) async throws -> ContactsSnapshot {
+        async let contactsRequest: [ContactRecord] = listAllRecords(
+            collection: "users",
+            filter: "",
+            sort: "name,id",
+            token: token
+        )
+        async let favoritesRequest: [ContactFavoriteRecord] = listAllRecords(
+            collection: "contact_favorites",
+            filter: "owner = \"\(Self.filterLiteral(ownerID))\"",
+            sort: "-created",
+            token: token
+        )
+        let (records, favorites) = try await (contactsRequest, favoritesRequest)
+        let favoriteRecordIDs = Dictionary(
+            uniqueKeysWithValues: favorites.map { ($0.contact, $0.id) }
+        )
+        let contacts = records.map { record in
+            Contact(
+                id: record.id,
+                collectionID: record.collectionID,
+                name: record.name,
+                email: record.email,
+                phone: record.phone,
+                title: record.title,
+                bio: record.bio,
+                status: record.status,
+                avatarURL: fileURL(
+                    collectionId: record.collectionID,
+                    recordId: record.id,
+                    fileName: record.avatar
+                ),
+                isFavorite: favoriteRecordIDs[record.id] != nil
+            )
+        }
+        return ContactsSnapshot(contacts: contacts, favoriteRecordIDs: favoriteRecordIDs)
+    }
+
+    func createContactFavorite(
+        ownerID: String,
+        contactID: String,
+        token: String
+    ) async throws -> ContactFavoriteRecord {
+        struct Body: Encodable {
+            let owner: String
+            let contact: String
+        }
+        return try await sendJSON(
+            path: "/api/collections/contact_favorites/records",
+            method: "POST",
+            body: Body(owner: ownerID, contact: contactID),
+            token: token
+        )
+    }
+
+    func deleteContactFavorite(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/contact_favorites/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    func getReadingPage(
+        filter: ReadingListFilter,
+        page: Int,
+        pageSize: Int,
+        query: String,
+        token: String
+    ) async throws -> ReadingPage {
+        var filters: [String]
+        switch filter {
+        case .active:
+            filters = ["status != \"archived\""]
+        case .unread:
+            filters = ["status = \"unread\""]
+        case .read:
+            filters = ["status = \"read\""]
+        case .pinned:
+            filters = ["status != \"archived\"", "pinned = true"]
+        case .archived:
+            filters = ["status = \"archived\""]
+        }
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedQuery.isEmpty {
+            let escaped = Self.filterLiteral(normalizedQuery)
+            filters.append(
+                "(title ~ \"\(escaped)\" || url ~ \"\(escaped)\" || "
+                    + "description ~ \"\(escaped)\" || summary ~ \"\(escaped)\" || "
+                    + "tags ~ \"\(escaped)\" || key_points ~ \"\(escaped)\")"
+            )
+        }
+        let filterString = filters.joined(separator: " && ")
+
+        async let pageRequest: RecordListResponse<ReadingItem> = send(
+            path: "/api/collections/reading_items/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "perPage", value: String(pageSize)),
+                URLQueryItem(name: "sort", value: "-pinned,-updated"),
+                URLQueryItem(name: "filter", value: filterString),
+                URLQueryItem(
+                    name: "fields",
+                    value: "id,owner,project,url,title,description,tags,status,pinned,summary,key_points,summary_language,created,updated"
+                ),
+            ],
+            token: token
+        )
+        async let unreadRequest: RecordListResponse<RecordIDOnly> = send(
+            path: "/api/collections/reading_items/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "page", value: "1"),
+                URLQueryItem(name: "perPage", value: "1"),
+                URLQueryItem(name: "filter", value: "status = \"unread\""),
+                URLQueryItem(name: "fields", value: "id"),
+            ],
+            token: token
+        )
+        let (result, unread) = try await (pageRequest, unreadRequest)
+        return ReadingPage(
+            items: result.items,
+            page: result.page,
+            totalPages: max(1, result.totalPages),
+            totalItems: result.totalItems,
+            unreadCount: unread.totalItems
+        )
+    }
+
+    func createReadingItem(
+        ownerID: String,
+        input: ReadingItemInput,
+        token: String
+    ) async throws -> ReadingItem {
+        struct Body: Encodable {
+            let owner: String
+            let url: String
+            let title: String
+            let description: String
+            let tags: [String]
+            let status: ReadingStatus
+        }
+        return try await sendJSON(
+            path: "/api/collections/reading_items/records",
+            method: "POST",
+            body: Body(
+                owner: ownerID,
+                url: input.url,
+                title: input.title,
+                description: input.description,
+                tags: input.tags,
+                status: input.status
+            ),
+            token: token
+        )
+    }
+
+    func updateReadingStatus(
+        id: String,
+        status: ReadingStatus,
+        token: String
+    ) async throws -> ReadingItem {
+        struct Body: Encodable { let status: ReadingStatus }
+        return try await sendJSON(
+            path: "/api/collections/reading_items/records/\(id)",
+            method: "PATCH",
+            body: Body(status: status),
+            token: token
+        )
+    }
+
+    func setReadingPinned(id: String, pinned: Bool, token: String) async throws {
+        struct Body: Encodable { let pinned: Bool }
+        struct Response: Decodable { let ok: Bool }
+        let _: Response = try await sendJSON(
+            path: "/api/reading/items/\(id)/pin",
+            method: "POST",
+            body: Body(pinned: pinned),
+            token: token
+        )
+    }
+
+    func deleteReadingItem(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/reading_items/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    func summarizeReadingItem(id: String, token: String) async throws -> ReadingSummaryResponse {
+        try await send(
+            path: "/api/reading/items/\(id)/summarize",
+            method: "POST",
+            token: token
+        )
+    }
+
+    func markAllReadingItemsRead(token: String) async throws -> Int {
+        struct Response: Decodable { let updated: Int }
+        let response: Response = try await send(
+            path: "/api/reading/items/read-all",
+            method: "POST",
+            token: token
+        )
+        return response.updated
+    }
+
     func getNotifications(page: Int, pageSize: Int, token: String) async throws -> NotificationPage {
         let response: RecordListResponse<AppNotification> = try await send(
             path: "/api/collections/notifications/records",

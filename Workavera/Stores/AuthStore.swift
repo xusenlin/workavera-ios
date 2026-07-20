@@ -234,6 +234,75 @@ final class AuthStore {
         await loadPreferences()
     }
 
+    func loadContacts() async throws -> ContactsSnapshot {
+        guard let user, let token else { throw sessionUnavailableError }
+        return try await makeClient().getContacts(ownerID: user.id, token: token)
+    }
+
+    func createContactFavorite(contactID: String) async throws -> ContactFavoriteRecord {
+        guard let user, let token else { throw sessionUnavailableError }
+        return try await makeClient().createContactFavorite(
+            ownerID: user.id,
+            contactID: contactID,
+            token: token
+        )
+    }
+
+    func deleteContactFavorite(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteContactFavorite(id: id, token: token)
+    }
+
+    func loadReadingPage(
+        filter: ReadingListFilter,
+        page: Int,
+        pageSize: Int,
+        query: String
+    ) async throws -> ReadingPage {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getReadingPage(
+            filter: filter,
+            page: page,
+            pageSize: pageSize,
+            query: query,
+            token: token
+        )
+    }
+
+    func createReadingItem(input: ReadingItemInput) async throws -> ReadingItem {
+        guard let user, let token else { throw sessionUnavailableError }
+        return try await makeClient().createReadingItem(
+            ownerID: user.id,
+            input: input,
+            token: token
+        )
+    }
+
+    func updateReadingStatus(id: String, status: ReadingStatus) async throws -> ReadingItem {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().updateReadingStatus(id: id, status: status, token: token)
+    }
+
+    func setReadingPinned(id: String, pinned: Bool) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().setReadingPinned(id: id, pinned: pinned, token: token)
+    }
+
+    func deleteReadingItem(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteReadingItem(id: id, token: token)
+    }
+
+    func summarizeReadingItem(id: String) async throws -> ReadingSummaryResponse {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().summarizeReadingItem(id: id, token: token)
+    }
+
+    func markAllReadingItemsRead() async throws -> Int {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().markAllReadingItemsRead(token: token)
+    }
+
     func loadNotifications(page: Int, pageSize: Int) async throws -> NotificationPage {
         guard let token else { throw sessionUnavailableError }
         return try await makeClient().getNotifications(

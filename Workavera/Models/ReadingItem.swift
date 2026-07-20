@@ -1,132 +1,149 @@
 import Foundation
 
-/// 阅读条目（稍后读），字段对应后端 reading_items 集合。
-struct ReadingItem: Identifiable, Equatable {
-    let id: String
-    var title: String
-    var url: String
-    var siteName: String
-    var excerpt: String
-    var author: String?
-    var readingMinutes: Int
-    var addedAt: Date
-    var isArchived: Bool
-    var isFavorite: Bool
+enum ReadingStatus: String, Codable, CaseIterable, Identifiable {
+    case unread
+    case read
+    case archived
 
-    var host: String {
-        URL(string: url)?.host() ?? siteName
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .unread: "Unread"
+        case .read: "Read"
+        case .archived: "Archived"
+        }
     }
 }
 
-// MARK: - 布局示例数据（接入 API 前的占位数据）
+enum ReadingListFilter: String, CaseIterable, Identifiable {
+    case active
+    case unread
+    case read
+    case pinned
+    case archived
 
-extension ReadingItem {
-    static let sample: [ReadingItem] = {
-        func daysAgo(_ value: Int) -> Date {
-            Calendar.current.date(byAdding: .day, value: -value, to: .now) ?? .now
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .active: "All"
+        case .unread: "Unread"
+        case .read: "Read"
+        case .pinned: "Pinned"
+        case .archived: "Archived"
         }
+    }
 
-        return [
-            ReadingItem(
-                id: "r1",
-                title: "Designing a Calm Kanban for Small Screens",
-                url: "https://blog.example.com/calm-kanban",
-                siteName: "Design Blog",
-                excerpt: "Why horizontal columns fail on phones, and what to do instead: single-column lists, state switchers and progressive disclosure.",
-                author: "Nora Fields",
-                readingMinutes: 8,
-                addedAt: daysAgo(0), isArchived: false, isFavorite: true
-            ),
-            ReadingItem(
-                id: "r2",
-                title: "Offline-First Sync Strategies",
-                url: "https://engineering.example.com/offline-first",
-                siteName: "Engineering Weekly",
-                excerpt: "Mutation queues, optimistic updates and conflict resolution patterns that actually work in production.",
-                author: nil,
-                readingMinutes: 14,
-                addedAt: daysAgo(1), isArchived: false, isFavorite: false
-            ),
-            ReadingItem(
-                id: "r3",
-                title: "SwiftUI Observation Framework Deep Dive",
-                url: "https://swift.example.com/observation",
-                siteName: "Swift Notes",
-                excerpt: "How @Observable tracks access at the property level and what that means for view invalidation.",
-                author: "Kenji Mori",
-                readingMinutes: 11,
-                addedAt: daysAgo(2), isArchived: false, isFavorite: true
-            ),
-            ReadingItem(
-                id: "r4",
-                title: "The Craft of Release Notes",
-                url: "https://writing.example.com/release-notes",
-                siteName: "Product Writing",
-                excerpt: "Release notes are a product surface. Write them like you mean it.",
-                author: nil,
-                readingMinutes: 5,
-                addedAt: daysAgo(4), isArchived: false, isFavorite: false
-            ),
-            ReadingItem(
-                id: "r5",
-                title: "PocketBase in Production: Lessons Learned",
-                url: "https://backend.example.com/pocketbase",
-                siteName: "Backend Journal",
-                excerpt: "Migrations, hooks, realtime subscriptions and where the sharp edges are.",
-                author: "Grace Liu",
-                readingMinutes: 9,
-                addedAt: daysAgo(6), isArchived: false, isFavorite: false
-            ),
-            ReadingItem(
-                id: "r6",
-                title: "Typography for Developer Tools",
-                url: "https://design.example.com/dev-typography",
-                siteName: "Design Blog",
-                excerpt: "Monospace beyond code: numerals, alignment and legibility in dense UIs.",
-                author: "Ada Chen",
-                readingMinutes: 6,
-                addedAt: daysAgo(8), isArchived: false, isFavorite: false
-            ),
-            ReadingItem(
-                id: "r7",
-                title: "A Field Guide to Empty States",
-                url: "https://blog.example.com/empty-states",
-                siteName: "UX Patterns",
-                excerpt: "Empty states are onboarding moments. Use them well.",
-                author: nil,
-                readingMinutes: 4,
-                addedAt: daysAgo(10), isArchived: true, isFavorite: false
-            ),
-            ReadingItem(
-                id: "r8",
-                title: "Mobile Navigation Patterns, Revisited",
-                url: "https://ux.example.com/mobile-nav",
-                siteName: "UX Patterns",
-                excerpt: "Tabs, sheets and drill-ins — picking the right container for your content.",
-                author: "Tom Becker",
-                readingMinutes: 7,
-                addedAt: daysAgo(12), isArchived: false, isFavorite: false
-            ),
-            ReadingItem(
-                id: "r9",
-                title: "SQLite Is All You Need (Sometimes)",
-                url: "https://backend.example.com/sqlite",
-                siteName: "Backend Journal",
-                excerpt: "When a single-file database outperforms your distributed setup.",
-                author: nil,
-                readingMinutes: 12,
-                addedAt: daysAgo(15), isArchived: true, isFavorite: true
-            ),
-            ReadingItem(
-                id: "r10",
-                title: "Making Friends with Date Formatters",
-                url: "https://swift.example.com/dates",
-                siteName: "Swift Notes",
-                excerpt: "Relative dates, calendars and time zones without tears.",
-                author: "Kenji Mori",
-                readingMinutes: 6,
-                addedAt: daysAgo(18), isArchived: false, isFavorite: false
-            ),
-        ]
-    }()
+    var icon: String {
+        switch self {
+        case .active: "book"
+        case .unread: "circle.fill"
+        case .read: "checkmark.circle"
+        case .pinned: "pin.fill"
+        case .archived: "archivebox"
+        }
+    }
+}
+
+struct ReadingItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let ownerID: String
+    var projectID: String?
+    var url: String
+    var title: String
+    var description: String
+    var tags: [String]
+    var status: ReadingStatus
+    var pinned: Bool
+    var contentText: String
+    var summary: String
+    var keyPoints: [String]
+    var summaryLanguage: String?
+    let createdAt: Date
+    var updatedAt: Date
+
+    var host: String {
+        guard let host = URL(string: url)?.host(), !host.isEmpty else { return url }
+        return host.replacingOccurrences(of: "www.", with: "")
+    }
+
+    var preview: String {
+        if !summary.isEmpty { return summary }
+        if !description.isEmpty { return description }
+        return url
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, url, title, description, tags, status, pinned, summary, created, updated
+        case ownerID = "owner"
+        case projectID = "project"
+        case contentText = "content_text"
+        case keyPoints = "key_points"
+        case summaryLanguage = "summary_language"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        ownerID = try container.decode(String.self, forKey: .ownerID)
+        projectID = Self.nonEmpty(try container.decodeIfPresent(String.self, forKey: .projectID))
+        url = try container.decode(String.self, forKey: .url)
+        title = try container.decode(String.self, forKey: .title)
+        description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        status = try container.decodeIfPresent(ReadingStatus.self, forKey: .status) ?? .unread
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        contentText = try container.decodeIfPresent(String.self, forKey: .contentText) ?? ""
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        keyPoints = try container.decodeIfPresent([String].self, forKey: .keyPoints) ?? []
+        summaryLanguage = Self.nonEmpty(
+            try container.decodeIfPresent(String.self, forKey: .summaryLanguage)
+        )
+        createdAt = ReadingDate.parse(try container.decodeIfPresent(String.self, forKey: .created) ?? "")
+        updatedAt = ReadingDate.parse(try container.decodeIfPresent(String.self, forKey: .updated) ?? "")
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+}
+
+struct ReadingPage: Equatable {
+    let items: [ReadingItem]
+    let page: Int
+    let totalPages: Int
+    let totalItems: Int
+    let unreadCount: Int
+}
+
+struct ReadingItemInput {
+    var url: String
+    var title: String
+    var description: String
+    var tags: [String]
+    var status: ReadingStatus = .unread
+}
+
+struct ReadingSummaryResponse: Decodable, Equatable {
+    let contentText: String
+    let summary: String
+    let keyPoints: [String]
+}
+
+enum ReadingDate {
+    static func parse(_ value: String) -> Date {
+        let fractionalISO = ISO8601DateFormatter()
+        fractionalISO.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let standardISO = ISO8601DateFormatter()
+        let pocketBase = DateFormatter()
+        pocketBase.locale = Locale(identifier: "en_US_POSIX")
+        pocketBase.timeZone = TimeZone(secondsFromGMT: 0)
+        pocketBase.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSXXXXX"
+        return fractionalISO.date(from: value)
+            ?? standardISO.date(from: value)
+            ?? pocketBase.date(from: value)
+            ?? .distantPast
+    }
 }
