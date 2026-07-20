@@ -68,16 +68,15 @@ struct SavedMemoriesView: View {
                 apply(saved)
             }
         }
-        .confirmationDialog(
+        .alert(
             deleteTitle,
-            isPresented: deletePresented,
-            titleVisibility: .visible
+            isPresented: deletePresented
         ) {
             if let deleteTarget {
+                Button("Cancel", role: .cancel) { self.deleteTarget = nil }
                 Button(deleteButtonTitle, role: .destructive) {
                     Task { await delete(deleteTarget) }
                 }
-                Button("Cancel", role: .cancel) { self.deleteTarget = nil }
             }
         } message: {
             Text(deleteMessage)

@@ -45,16 +45,15 @@ struct APIKeysView: View {
                 Task { await loadKeys() }
             }
         }
-        .confirmationDialog(
+        .alert(
             "Revoke API key?",
-            isPresented: revokePresented,
-            titleVisibility: .visible
+            isPresented: revokePresented
         ) {
             if let revokeTarget {
+                Button("Cancel", role: .cancel) { self.revokeTarget = nil }
                 Button("Revoke \"\(revokeTarget.name)\"", role: .destructive) {
                     Task { await revoke(revokeTarget) }
                 }
-                Button("Cancel", role: .cancel) { self.revokeTarget = nil }
             }
         } message: {
             Text("The key will stop working immediately. Connected MCP clients will lose access.")

@@ -39,15 +39,14 @@ struct SessionRecoveryView: View {
             ServerSettingsSheet()
                 .presentationDetents([.medium, .large])
         }
-        .confirmationDialog(
+        .alert(
             "Sign out of Workavera?",
-            isPresented: $confirmSignOut,
-            titleVisibility: .visible
+            isPresented: $confirmSignOut
         ) {
+            Button("Cancel", role: .cancel) {}
             Button("Sign Out", role: .destructive) {
                 auth.logout()
             }
-            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Your saved session will be removed from this device.")
         }

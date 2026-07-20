@@ -46,17 +46,16 @@ struct NotificationsView: View {
         } message: {
             Text(notifications.errorMessage ?? "Unknown error")
         }
-        .confirmationDialog(
+        .alert(
             "Delete Notification?",
             isPresented: $showDeleteConfirmation,
-            titleVisibility: .visible,
             presenting: deleteTarget
         ) { notification in
-            Button("Delete", role: .destructive) {
-                Task { await notifications.delete(notification, using: auth) }
+            Button("Cancel", role: .cancel) {
                 deleteTarget = nil
             }
-            Button("Cancel", role: .cancel) {
+            Button("Delete", role: .destructive) {
+                Task { await notifications.delete(notification, using: auth) }
                 deleteTarget = nil
             }
         } message: { _ in

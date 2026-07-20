@@ -571,7 +571,7 @@ private struct EventDetailSheet: View {
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if isMutating { ProgressView().controlSize(.small) }
-                    Button(action: onEdit) { Image(systemName: "pencil") }
+                    Button(action: onEdit) { Image(systemName: "square.and.pencil") }
                         .disabled(isMutating)
                         .accessibilityLabel("Edit event")
                     Button(role: .destructive, action: onDelete) { Image(systemName: "trash") }
