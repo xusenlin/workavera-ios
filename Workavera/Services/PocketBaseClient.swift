@@ -5,6 +5,50 @@ struct AuthResponse: Decodable {
     let record: User
 }
 
+private struct CalendarEventPayload: Encodable {
+    let owner: String?
+    let title: String
+    let description: String
+    let startAt: String
+    let endAt: String
+    let allDay: Bool
+    let timezone: String
+    let location: String
+    let color: EventColor
+    let recurrenceFrequency: EventRecurrenceFrequency
+    let recurrenceInterval: Int
+    let reminderMinutesBefore: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case owner, title, description, timezone, location, color
+        case startAt = "start_at"
+        case endAt = "end_at"
+        case allDay = "all_day"
+        case recurrenceFrequency = "recurrence_frequency"
+        case recurrenceInterval = "recurrence_interval"
+        case reminderMinutesBefore = "reminder_minutes_before"
+    }
+
+    init(owner: String?, input: CalendarEventInput) {
+        self.owner = owner
+        title = input.title
+        description = input.description
+        startAt = CalendarDate.string(from: input.startAt)
+        endAt = CalendarDate.string(from: input.endAt)
+        allDay = input.allDay
+        timezone = input.timezone
+        location = input.location
+        color = input.color
+        recurrenceFrequency = input.recurrenceFrequency
+        recurrenceInterval = input.recurrenceInterval
+        reminderMinutesBefore = input.reminder.rawValue
+    }
+}
+
+private struct RealtimeConnection: Decodable {
+    let clientId: String
+}
+
 enum APIError: LocalizedError {
     case invalidResponse
     case transport(URLError)
@@ -270,99 +314,23 @@ struct PocketBaseClient {
     func notificationRealtimeEvents(
         token: String
     ) -> AsyncThrowingStream<NotificationRealtimeEvent, Error> {
-        let realtimeURL = configuration.baseURL.appending(path: "/api/realtime")
-        let session = session
+        realtimeEvents(
+            topics: ["notifications/*"],
+            eventPrefixes: ["notifications"],
+            token: token,
+            connectionError: "Could not connect to realtime notifications."
+        )
+    }
 
-        return AsyncThrowingStream { continuation in
-            let streamTask = Task {
-                do {
-                    var request = URLRequest(url: realtimeURL)
-                    request.httpMethod = "GET"
-                    request.timeoutInterval = 35 * 60
-                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-                    let (bytes, response) = try await session.bytes(for: request)
-                    guard let http = response as? HTTPURLResponse else {
-                        throw APIError.invalidResponse
-                    }
-                    guard (200..<300).contains(http.statusCode) else {
-                        throw APIError.http(
-                            statusCode: http.statusCode,
-                            message: "Could not connect to realtime notifications.",
-                            fieldMessages: [:]
-                        )
-                    }
-
-                    func dispatchFrame(_ frame: Data) async throws {
-                        let text = String(decoding: frame, as: UTF8.self)
-                        var eventName = ""
-                        var dataLines: [String] = []
-                        for rawLine in text.split(whereSeparator: \.isNewline) {
-                            let line = String(rawLine)
-                            if line.hasPrefix("event:") {
-                                eventName = String(line.dropFirst("event:".count))
-                                    .trimmingCharacters(in: .whitespaces)
-                            } else if line.hasPrefix("data:") {
-                                dataLines.append(
-                                    String(line.dropFirst("data:".count))
-                                        .trimmingCharacters(in: .whitespaces)
-                                )
-                            }
-                        }
-                        guard !eventName.isEmpty else { return }
-                        let data = Data(dataLines.joined(separator: "\n").utf8)
-                        if eventName == "PB_CONNECT" {
-                            struct Connection: Decodable { let clientId: String }
-                            let connection = try JSONDecoder().decode(Connection.self, from: data)
-                            try await Self.setRealtimeSubscriptions(
-                                clientID: connection.clientId,
-                                topics: ["notifications/*"],
-                                token: token,
-                                url: realtimeURL,
-                                session: session
-                            )
-                        } else if eventName.hasPrefix("notifications") {
-                            let event = try JSONDecoder().decode(NotificationRealtimeEvent.self, from: data)
-                            continuation.yield(event)
-                        }
-                    }
-
-                    var frameBytes: [UInt8] = []
-                    for try await byte in bytes {
-                        try Task.checkCancellation()
-                        frameBytes.append(byte)
-                        let delimiterLength: Int
-                        if frameBytes.suffix(4).elementsEqual([13, 10, 13, 10]) {
-                            delimiterLength = 4
-                        } else if frameBytes.suffix(2).elementsEqual([10, 10]) {
-                            delimiterLength = 2
-                        } else {
-                            if frameBytes.count > 1_048_576 {
-                                throw APIError.invalidResponse
-                            }
-                            continue
-                        }
-                        frameBytes.removeLast(delimiterLength)
-                        try await dispatchFrame(Data(frameBytes))
-                        frameBytes.removeAll(keepingCapacity: true)
-                    }
-                    if !frameBytes.isEmpty {
-                        try await dispatchFrame(Data(frameBytes))
-                    }
-                    continuation.finish()
-                } catch is CancellationError {
-                    continuation.finish()
-                } catch {
-                    if Task.isCancelled {
-                        continuation.finish()
-                    } else {
-                        continuation.finish(throwing: error)
-                    }
-                }
-            }
-            continuation.onTermination = { _ in streamTask.cancel() }
-        }
+    func calendarRealtimeSignals(
+        token: String
+    ) -> AsyncThrowingStream<CalendarRealtimeSignal, Error> {
+        realtimeEvents(
+            topics: ["calendar_events/*", "board_tasks/*"],
+            eventPrefixes: ["calendar_events", "board_tasks"],
+            token: token,
+            connectionError: "Could not connect to realtime calendar updates."
+        )
     }
 
     func getDashboardSummary(now: Date = .now, token: String) async throws -> DashboardSummary {
@@ -681,6 +649,74 @@ struct PocketBaseClient {
     func deleteSavedMemory(id: String, token: String) async throws {
         try await sendWithoutResponse(
             path: "/api/collections/chat_memories/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    func getCalendarSnapshot(token: String) async throws -> CalendarSnapshot {
+        struct SystemConfig: Decodable { let timezone: String }
+
+        async let eventsRequest: [AppEvent] = listAllRecords(
+            collection: "calendar_events",
+            filter: "",
+            sort: "start_at",
+            token: token
+        )
+        async let tasksRequest: [CalendarTaskDeadline] = listAllRecords(
+            collection: "board_tasks",
+            filter: "due_date != \"\"",
+            sort: "due_date",
+            expand: "project,state",
+            token: token
+        )
+        async let configRequest: SystemConfig = send(
+            path: "/api/configs/system",
+            method: "GET",
+            token: token
+        )
+
+        let (loadedEvents, tasks, config) = try await (eventsRequest, tasksRequest, configRequest)
+        let timezone = TimeZone(identifier: config.timezone) == nil
+            ? TimeZone.current.identifier
+            : config.timezone
+        let events = loadedEvents.map { event in
+            var event = event
+            event.timezone = timezone
+            return event
+        }
+        return CalendarSnapshot(events: events, tasks: tasks, timezone: timezone)
+    }
+
+    func createCalendarEvent(
+        ownerID: String,
+        input: CalendarEventInput,
+        token: String
+    ) async throws -> AppEvent {
+        try await sendJSON(
+            path: "/api/collections/calendar_events/records",
+            method: "POST",
+            body: CalendarEventPayload(owner: ownerID, input: input),
+            token: token
+        )
+    }
+
+    func updateCalendarEvent(
+        id: String,
+        input: CalendarEventInput,
+        token: String
+    ) async throws -> AppEvent {
+        try await sendJSON(
+            path: "/api/collections/calendar_events/records/\(id)",
+            method: "PATCH",
+            body: CalendarEventPayload(owner: nil, input: input),
+            token: token
+        )
+    }
+
+    func deleteCalendarEvent(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/calendar_events/records/\(id)",
             method: "DELETE",
             token: token
         )
@@ -1048,6 +1084,105 @@ struct PocketBaseClient {
             updatedAt: DocsDate.parse(record.updated),
             pinned: pinned
         )
+    }
+
+    private func realtimeEvents<Event: Decodable>(
+        topics: [String],
+        eventPrefixes: [String],
+        token: String,
+        connectionError: String
+    ) -> AsyncThrowingStream<Event, Error> {
+        let realtimeURL = configuration.baseURL.appending(path: "/api/realtime")
+        let session = session
+
+        return AsyncThrowingStream { continuation in
+            let streamTask = Task {
+                do {
+                    var request = URLRequest(url: realtimeURL)
+                    request.httpMethod = "GET"
+                    request.timeoutInterval = 35 * 60
+                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw APIError.invalidResponse
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        throw APIError.http(
+                            statusCode: http.statusCode,
+                            message: connectionError,
+                            fieldMessages: [:]
+                        )
+                    }
+
+                    func dispatchFrame(_ frame: Data) async throws {
+                        let text = String(decoding: frame, as: UTF8.self)
+                        var eventName = ""
+                        var dataLines: [String] = []
+                        for rawLine in text.split(whereSeparator: \.isNewline) {
+                            let line = String(rawLine)
+                            if line.hasPrefix("event:") {
+                                eventName = String(line.dropFirst("event:".count))
+                                    .trimmingCharacters(in: .whitespaces)
+                            } else if line.hasPrefix("data:") {
+                                dataLines.append(
+                                    String(line.dropFirst("data:".count))
+                                        .trimmingCharacters(in: .whitespaces)
+                                )
+                            }
+                        }
+                        guard !eventName.isEmpty else { return }
+                        let data = Data(dataLines.joined(separator: "\n").utf8)
+                        if eventName == "PB_CONNECT" {
+                            let connection = try JSONDecoder().decode(RealtimeConnection.self, from: data)
+                            try await Self.setRealtimeSubscriptions(
+                                clientID: connection.clientId,
+                                topics: topics,
+                                token: token,
+                                url: realtimeURL,
+                                session: session
+                            )
+                        } else if eventPrefixes.contains(where: eventName.hasPrefix) {
+                            continuation.yield(try JSONDecoder().decode(Event.self, from: data))
+                        }
+                    }
+
+                    var frameBytes: [UInt8] = []
+                    for try await byte in bytes {
+                        try Task.checkCancellation()
+                        frameBytes.append(byte)
+                        let delimiterLength: Int
+                        if frameBytes.suffix(4).elementsEqual([13, 10, 13, 10]) {
+                            delimiterLength = 4
+                        } else if frameBytes.suffix(2).elementsEqual([10, 10]) {
+                            delimiterLength = 2
+                        } else {
+                            if frameBytes.count > 1_048_576 {
+                                throw APIError.invalidResponse
+                            }
+                            continue
+                        }
+                        frameBytes.removeLast(delimiterLength)
+                        try await dispatchFrame(Data(frameBytes))
+                        frameBytes.removeAll(keepingCapacity: true)
+                    }
+                    if !frameBytes.isEmpty {
+                        try await dispatchFrame(Data(frameBytes))
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in streamTask.cancel() }
+        }
     }
 
     private static func setRealtimeSubscriptions(

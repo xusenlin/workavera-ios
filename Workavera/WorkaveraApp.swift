@@ -7,6 +7,7 @@ struct WorkaveraApp: App {
     @State private var board = BoardStore()
     @State private var dashboard = DashboardStore()
     @State private var docs = DocsStore()
+    @State private var calendar = CalendarStore()
 
     var body: some Scene {
         WindowGroup {
@@ -28,6 +29,7 @@ struct WorkaveraApp: App {
             .environment(board)
             .environment(dashboard)
             .environment(docs)
+            .environment(calendar)
             .preferredColorScheme(auth.appearance.colorScheme)
         }
     }

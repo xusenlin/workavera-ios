@@ -726,6 +726,185 @@ final class PocketBaseClientTests: XCTestCase {
         try await client.deleteSavedMemory(id: "memory-1", token: "token-value")
     }
 
+    func testCalendarSnapshotAndEventCRUDMatchWebContract() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let components = try XCTUnwrap(
+                URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            )
+            let query = Dictionary(
+                uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+            )
+            let response: Data
+
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/api/configs/system"):
+                response = Data(#"{"timezone":"Asia/Shanghai"}"#.utf8)
+
+            case ("GET", "/api/collections/calendar_events/records"):
+                XCTAssertEqual(query["page"], "1")
+                XCTAssertEqual(query["perPage"], "200")
+                XCTAssertEqual(query["sort"], "start_at")
+                XCTAssertNil(query["filter"])
+                response = Data(#"{"page":1,"totalPages":1,"items":[{"id":"event-1","owner":"user-1","title":"Weekly planning","description":"Plan the next sprint","start_at":"2026-07-20 01:00:00.000Z","end_at":"2026-07-20 02:00:00.000Z","all_day":false,"timezone":"UTC","location":"Room 3","color":"purple","recurrence_frequency":"weekly","recurrence_interval":1,"reminder_minutes_before":10}]}"#.utf8)
+
+            case ("GET", "/api/collections/board_tasks/records"):
+                XCTAssertEqual(query["page"], "1")
+                XCTAssertEqual(query["perPage"], "200")
+                XCTAssertEqual(query["filter"], "due_date != \"\"")
+                XCTAssertEqual(query["sort"], "due_date")
+                XCTAssertEqual(query["expand"], "project,state")
+                response = Data(#"{"page":1,"totalPages":1,"items":[{"id":"task-1","project":"project-1","title":"Ship iOS","description":"Release build","priority":"urgent","due_date":"2026-07-21 00:00:00.000Z","expand":{"project":{"name":"Mobile"},"state":{"category":"active"}}}]}"#.utf8)
+
+            case ("POST", "/api/collections/calendar_events/records"):
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertEqual(fields["owner"] as? String, "user-1")
+                XCTAssertEqual(fields["title"] as? String, "Design review")
+                XCTAssertEqual(fields["start_at"] as? String, "2026-07-21T01:00:00.000Z")
+                XCTAssertEqual(fields["end_at"] as? String, "2026-07-21T02:00:00.000Z")
+                XCTAssertEqual(fields["recurrence_frequency"] as? String, "none")
+                XCTAssertEqual(fields["recurrence_interval"] as? Int, 1)
+                XCTAssertEqual(fields["reminder_minutes_before"] as? Int, 30)
+                response = Data(#"{"id":"event-2","owner":"user-1","title":"Design review","description":"","start_at":"2026-07-21 01:00:00.000Z","end_at":"2026-07-21 02:00:00.000Z","all_day":false,"timezone":"Asia/Shanghai","location":"","color":"blue","recurrence_frequency":"none","recurrence_interval":1,"reminder_minutes_before":30}"#.utf8)
+
+            case ("PATCH", "/api/collections/calendar_events/records/event-2"):
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertNil(fields["owner"])
+                XCTAssertEqual(fields["title"] as? String, "Updated design review")
+                XCTAssertEqual(fields["timezone"] as? String, "Asia/Shanghai")
+                response = Data(#"{"id":"event-2","owner":"user-1","title":"Updated design review","description":"","start_at":"2026-07-21 01:00:00.000Z","end_at":"2026-07-21 02:00:00.000Z","all_day":false,"timezone":"Asia/Shanghai","location":"","color":"blue","recurrence_frequency":"none","recurrence_interval":1,"reminder_minutes_before":30}"#.utf8)
+
+            case ("DELETE", "/api/collections/calendar_events/records/event-2"):
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+
+            default:
+                XCTFail("Unexpected Calendar request: \(request.httpMethod ?? "nil") \(request.url?.absoluteString ?? "nil")")
+                response = Data()
+            }
+
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                response
+            )
+        }
+
+        let client = try makeClient()
+        let snapshot = try await client.getCalendarSnapshot(token: "token-value")
+        XCTAssertEqual(snapshot.timezone, "Asia/Shanghai")
+        XCTAssertEqual(snapshot.events.first?.timezone, "Asia/Shanghai")
+        XCTAssertEqual(snapshot.events.first?.recurrenceFrequency, .weekly)
+        XCTAssertEqual(snapshot.events.first?.reminder, .tenMinutes)
+        XCTAssertEqual(snapshot.tasks.first?.projectName, "Mobile")
+        XCTAssertEqual(snapshot.tasks.first?.dueDate, "2026-07-21")
+        XCTAssertEqual(snapshot.tasks.first?.completed, false)
+
+        let selectedDay = try XCTUnwrap(CalendarDate.parse("2026-07-27T00:00:00+08:00"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: snapshot.timezone))
+        let occurrence = try XCTUnwrap(snapshot.events.first?.occurrences(
+            overlapping: selectedDay,
+            calendar: calendar
+        ).first)
+        XCTAssertEqual(CalendarDate.string(from: occurrence.startAt), "2026-07-27T01:00:00.000Z")
+
+        let start = try XCTUnwrap(CalendarDate.parse("2026-07-21T01:00:00Z"))
+        let end = try XCTUnwrap(CalendarDate.parse("2026-07-21T02:00:00Z"))
+        let input = CalendarEventInput(
+            title: "Design review",
+            description: "",
+            startAt: start,
+            endAt: end,
+            allDay: false,
+            timezone: "Asia/Shanghai",
+            location: "",
+            color: .blue,
+            recurrenceFrequency: .none,
+            recurrenceInterval: 1,
+            reminder: .thirtyMinutes
+        )
+        let created = try await client.createCalendarEvent(
+            ownerID: "user-1",
+            input: input,
+            token: "token-value"
+        )
+        XCTAssertEqual(created.id, "event-2")
+
+        let updatedInput = CalendarEventInput(
+            title: "Updated design review",
+            description: input.description,
+            startAt: input.startAt,
+            endAt: input.endAt,
+            allDay: input.allDay,
+            timezone: input.timezone,
+            location: input.location,
+            color: input.color,
+            recurrenceFrequency: input.recurrenceFrequency,
+            recurrenceInterval: input.recurrenceInterval,
+            reminder: input.reminder
+        )
+        let updated = try await client.updateCalendarEvent(
+            id: created.id,
+            input: updatedInput,
+            token: "token-value"
+        )
+        XCTAssertEqual(updated.title, "Updated design review")
+        try await client.deleteCalendarEvent(id: created.id, token: "token-value")
+    }
+
+    func testCalendarRealtimeSubscribesToEventsAndTaskDeadlines() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/realtime")
+            if request.httpMethod == "POST" {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertEqual(fields["clientId"] as? String, "calendar-client")
+                XCTAssertEqual(
+                    Set(fields["subscriptions"] as? [String] ?? []),
+                    Set(["calendar_events/*", "board_tasks/*"])
+                )
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+            }
+
+            let body = Data(#"""
+            id:calendar-client
+            event:PB_CONNECT
+            data:{"clientId":"calendar-client"}
+
+            id:calendar-client
+            event:board_tasks/*
+            data:{"action":"update","record":{"id":"task-1"}}
+
+            """#.utf8)
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "text/event-stream"]
+                )!,
+                body
+            )
+        }
+
+        let stream = try makeClient().calendarRealtimeSignals(token: "token-value")
+        var iterator = stream.makeAsyncIterator()
+        let signal = try await iterator.next()
+        XCTAssertEqual(signal?.action, .update)
+        XCTAssertEqual(signal?.record.id, "task-1")
+    }
+
     func testNotificationRealtimeHandshakeSubscribesAndDecodesCreateEvent() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/realtime")

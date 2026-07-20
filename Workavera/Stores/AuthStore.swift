@@ -399,6 +399,35 @@ final class AuthStore {
         try await makeClient().deleteSavedMemory(id: id, token: token)
     }
 
+    func loadCalendarSnapshot() async throws -> CalendarSnapshot {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getCalendarSnapshot(token: token)
+    }
+
+    func createCalendarEvent(input: CalendarEventInput) async throws -> AppEvent {
+        guard let user, let token else { throw sessionUnavailableError }
+        return try await makeClient().createCalendarEvent(
+            ownerID: user.id,
+            input: input,
+            token: token
+        )
+    }
+
+    func updateCalendarEvent(id: String, input: CalendarEventInput) async throws -> AppEvent {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().updateCalendarEvent(id: id, input: input, token: token)
+    }
+
+    func deleteCalendarEvent(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteCalendarEvent(id: id, token: token)
+    }
+
+    func calendarRealtimeSignals() throws -> AsyncThrowingStream<CalendarRealtimeSignal, Error> {
+        guard let token else { throw sessionUnavailableError }
+        return try makeClient().calendarRealtimeSignals(token: token)
+    }
+
     func loadBoardPage(page: Int, pageSize: Int) async throws -> BoardPage {
         guard let user, let token else { throw sessionUnavailableError }
         return try await makeClient().getBoardPage(
