@@ -5,7 +5,6 @@ import SwiftUI
 struct BoardView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(BoardStore.self) private var board
-    @State private var selectedStateID: String?
     @State private var selectedTask: BoardTask?
     @State private var showProjectSwitcher = false
 
@@ -15,7 +14,7 @@ struct BoardView: View {
 
     private var selectedState: BoardState? {
         guard let project = selectedProject else { return nil }
-        return project.states.first { $0.id == selectedStateID } ?? project.states.first
+        return project.states.first { $0.id == board.selectedStateID } ?? project.states.first
     }
 
     var body: some View {
@@ -47,7 +46,6 @@ struct BoardView: View {
             ) { project in
                 withAnimation(.easeInOut(duration: 0.15)) {
                     board.selectProject(project)
-                    selectedStateID = nil
                 }
             }
         }
@@ -137,7 +135,7 @@ struct BoardView: View {
                         count: state.tasks.count
                     ) {
                         withAnimation(.easeInOut(duration: 0.15)) {
-                            selectedStateID = state.id
+                            board.selectState(state.id)
                         }
                     }
                 }

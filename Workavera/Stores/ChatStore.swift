@@ -6,6 +6,8 @@ import Observation
 final class ChatStore {
     static let pageSize = 20
     static let archivedPageSize = 10
+    /// Minimum interval between UI refreshes while a response streams in.
+    private static let streamFlushInterval: Duration = .milliseconds(80)
 
     private(set) var conversations: [ChatConversation] = []
     private(set) var selectedConversationID: String?
@@ -619,16 +621,31 @@ final class ChatStore {
             guard let self else { return }
             var reducer = initialReducer
             do {
+                var lastFlush: ContinuousClock.Instant?
                 for try await chunk in stream {
                     try Task.checkCancellation()
                     guard self.activeRunIDs[conversationID] == runID else { return }
                     reducer.apply(chunk)
+                    // Throttle UI updates: coalesce bursts of tokens into at most
+                    // one refresh per interval, but always render the first chunk
+                    // immediately so the user sees the response start.
+                    let now = ContinuousClock.now
+                    if let lastFlush, now - lastFlush < Self.streamFlushInterval {
+                        continue
+                    }
+                    lastFlush = now
                     self.upsertStreamMessage(
                         reducer.message,
                         conversationID: conversationID,
                         runID: runID
                     )
                 }
+                // Flush whatever the throttle may have skipped at the tail end.
+                self.upsertStreamMessage(
+                    reducer.message,
+                    conversationID: conversationID,
+                    runID: runID
+                )
                 self.messageErrorMessages[conversationID] = nil
             } catch is CancellationError {
                 return
@@ -676,7 +693,7 @@ final class ChatStore {
 
     private static func activeSort(lhs: ChatConversation, rhs: ChatConversation) -> Bool {
         if lhs.pinned != rhs.pinned { return lhs.pinned && !rhs.pinned }
-        if lhs.activityDate != rhs.activityDate { return lhs.activityDate > rhs.activityDate }
-        return lhs.updatedAt > rhs.updatedAt
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        return lhs.createdAt > rhs.createdAt
     }
 }

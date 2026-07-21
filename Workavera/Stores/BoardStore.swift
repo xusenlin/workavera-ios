@@ -9,6 +9,7 @@ final class BoardStore {
 
     private(set) var projects: [BoardProject] = []
     private(set) var selectedProjectID: String?
+    private(set) var selectedStateID: String?
     private(set) var page = 0
     private(set) var totalPages = 1
     private(set) var totalItems = 0
@@ -33,6 +34,7 @@ final class BoardStore {
         loadSequence += 1
         projects = []
         selectedProjectID = nil
+        selectedStateID = nil
         page = 0
         totalPages = 1
         totalItems = 0
@@ -104,7 +106,15 @@ final class BoardStore {
     }
 
     func selectProject(_ project: BoardProject) {
+        guard selectedProjectID != project.id else { return }
         selectedProjectID = project.id
+        selectedStateID = nil
+        persistSelection(page: page)
+    }
+
+    func selectState(_ stateID: String?) {
+        guard selectedStateID != stateID else { return }
+        selectedStateID = stateID
         persistSelection(page: page)
     }
 
@@ -256,6 +266,7 @@ final class BoardStore {
               let selection = try? JSONDecoder().decode(BoardSelection.self, from: data)
         else { return }
         selectedProjectID = selection.projectID
+        selectedStateID = selection.stateID
         page = max(0, selection.page)
         selectedProjectPage = page
     }
@@ -264,7 +275,11 @@ final class BoardStore {
         guard let selectionCacheKey, let selectedProjectID else { return }
         let normalizedPage = max(0, page)
         selectedProjectPage = normalizedPage
-        let selection = BoardSelection(projectID: selectedProjectID, page: normalizedPage)
+        let selection = BoardSelection(
+            projectID: selectedProjectID,
+            page: normalizedPage,
+            stateID: selectedStateID
+        )
         guard let data = try? JSONEncoder().encode(selection) else { return }
         defaults.set(data, forKey: selectionCacheKey)
     }
@@ -277,6 +292,7 @@ final class BoardStore {
         else { return }
 
         self.selectedProjectID = projects.first?.id
+        self.selectedStateID = nil
         if self.selectedProjectID == nil {
             selectedProjectPage = nil
             defaults.removeObject(forKey: selectionCacheKey)
@@ -289,4 +305,5 @@ final class BoardStore {
 private struct BoardSelection: Codable {
     let projectID: String
     let page: Int
+    var stateID: String?
 }

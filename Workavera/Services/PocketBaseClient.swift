@@ -307,8 +307,8 @@ struct PocketBaseClient {
         token: String
     ) async throws -> ChatConversationsPage {
         let sort = status == .active
-            ? "-pinned,-last_message_at,-updated"
-            : "-last_message_at,-updated"
+            ? "-pinned,-updated"
+            : "-updated"
         var filter = "status = \"\(status.rawValue)\""
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalizedQuery.isEmpty {

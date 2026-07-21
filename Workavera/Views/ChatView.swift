@@ -831,12 +831,25 @@ private struct AssistantMessagePartView: View {
     let runActive: Bool
     let messageStatus: ChatMessageStatus?
 
+    /// While the response is still streaming, render plain text to avoid
+    /// re-parsing the whole Markdown document on every token; swap to the
+    /// full Markdown renderer once the message settles.
+    private var isStreaming: Bool {
+        messageStatus == .streaming || messageStatus == .pending
+    }
+
     var body: some View {
         switch part.type {
         case "text":
             if let text = part.text, !text.isEmpty {
-                Markdown(text)
-                    .textSelection(.enabled)
+                if isStreaming {
+                    Text(text)
+                        .font(.body)
+                        .textSelection(.enabled)
+                } else {
+                    Markdown(text)
+                        .textSelection(.enabled)
+                }
             }
         case "reasoning":
             if let text = part.text, !text.isEmpty {
