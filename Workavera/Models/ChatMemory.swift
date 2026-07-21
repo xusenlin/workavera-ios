@@ -91,6 +91,43 @@ struct SavedChatMemory: Identifiable, Equatable, Decodable {
     }
 }
 
+/// Parsed view of a `system_memory_upsert` / `system_memory_forget` tool call,
+/// taken from either its input (while the call runs) or its output (once it
+/// settles). Used by the chat UI to render a purpose-built memory card.
+struct MemoryToolPayload: Equatable, Sendable {
+    enum Action: String, Sendable {
+        case created, updated, unchanged, forgotten, undone
+    }
+
+    var action: Action?
+    var category: MemoryCategory?
+    var content: String?
+    var origin: MemoryOrigin?
+
+    init?(input: JSONValue?) {
+        guard let object = Self.object(from: input) else { return nil }
+        category = object["category"]?.stringValue.flatMap(MemoryCategory.init(rawValue:))
+        content = object["content"]?.stringValue
+        origin = object["origin"]?.stringValue.flatMap(MemoryOrigin.init(rawValue:))
+    }
+
+    init?(output: JSONValue?) {
+        guard let object = Self.object(from: output),
+              let action = object["action"]?.stringValue.flatMap(Action.init(rawValue:)) else { return nil }
+        self.action = action
+        let memory = object["memory"]?.objectValue
+        category = memory?["category"]?.stringValue.flatMap(MemoryCategory.init(rawValue:))
+        content = memory?["content"]?.stringValue
+        origin = memory?["origin"]?.stringValue.flatMap(MemoryOrigin.init(rawValue:))
+    }
+
+    /// Tool outputs may arrive either as a JSON object or as a string holding
+    /// serialized JSON.
+    private static func object(from value: JSONValue?) -> [String: JSONValue]? {
+        value?.decodingEmbeddedJSON.objectValue
+    }
+}
+
 private enum MemoryDate {
     static func parse(_ value: String) -> Date {
         guard !value.isEmpty else { return .distantPast }

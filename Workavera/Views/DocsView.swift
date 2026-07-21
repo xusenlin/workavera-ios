@@ -5,6 +5,7 @@ struct DocsView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(DocsStore.self) private var docs
     @State private var showLocationSwitcher = false
+    @State private var deleteTarget: DocumentSummary?
 
     var body: some View {
         CachedContentView(
@@ -42,6 +43,19 @@ struct DocsView: View {
             ) { filter in
                 select(filter)
             }
+        }
+        .alert("Delete document?", isPresented: deletePresented) {
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+            Button("Delete", role: .destructive) {
+                guard let document = deleteTarget else { return }
+                Task {
+                    if await docs.delete(id: document.id, using: auth) {
+                        deleteTarget = nil
+                    }
+                }
+            }
+        } message: {
+            Text(deleteMessage)
         }
     }
 
@@ -82,15 +96,26 @@ struct DocsView: View {
                     .padding(.horizontal, 4)
 
                     ForEach(docs.documents) { document in
-                        NavigationLink {
-                            DocumentDetailView(documentID: document.id)
-                        } label: {
-                            DocumentRow(
-                                document: document,
-                                location: docs.locationName(for: document)
-                            )
+                        HStack(spacing: 12) {
+                            NavigationLink {
+                                DocumentDetailView(documentID: document.id)
+                            } label: {
+                                DocumentRow(
+                                    document: document,
+                                    location: docs.locationName(for: document)
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            if docs.pinningDocumentIDs.contains(document.id)
+                                || docs.mutatingDocumentIDs.contains(document.id)
+                            {
+                                ProgressView().controlSize(.small)
+                                    .frame(width: 28, height: 28)
+                            } else {
+                                documentMenu(document)
+                            }
                         }
-                        .buttonStyle(.plain)
                         .padding(16)
                         .background(
                             Color(.secondarySystemGroupedBackground),
@@ -172,6 +197,56 @@ struct DocsView: View {
 
     private func select(_ filter: DocsViewFilter) {
         Task { await docs.selectView(filter, using: auth) }
+    }
+
+    private func documentMenu(_ document: DocumentSummary) -> some View {
+        Menu {
+            if document.status == .draft {
+                Button {
+                    Task { await docs.togglePin(id: document.id, using: auth) }
+                } label: {
+                    Label(
+                        document.pinned ? "Unpin" : "Pin",
+                        systemImage: document.pinned ? "pin.slash" : "pin"
+                    )
+                }
+
+                Button {
+                    Task { await docs.setArchived(id: document.id, archived: true, using: auth) }
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
+            } else {
+                Button {
+                    Task { await docs.setArchived(id: document.id, archived: false, using: auth) }
+                } label: {
+                    Label("Restore", systemImage: "arrow.uturn.backward")
+                }
+            }
+
+            Divider()
+            Button(role: .destructive) { deleteTarget = document } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+    }
+
+    private var deletePresented: Binding<Bool> {
+        Binding(
+            get: { deleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } }
+        )
+    }
+
+    private var deleteMessage: String {
+        guard let deleteTarget else { return "This document will be permanently removed." }
+        return "“\(deleteTarget.title)” will be permanently removed. This action cannot be undone."
     }
 }
 
@@ -351,10 +426,17 @@ private struct DocumentRow: View {
                 )
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(document.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    Text(document.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    if document.pinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Text(metaLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -362,13 +444,6 @@ private struct DocumentRow: View {
             }
 
             Spacer(minLength: 8)
-
-            if document.pinned {
-                Image(systemName: "pin.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxHeight: .infinity, alignment: .top)
-            }
         }
         .contentShape(Rectangle())
     }
@@ -413,24 +488,14 @@ private struct DocumentDetailView: View {
         .navigationTitle(document?.title ?? "Document")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let document {
-                ToolbarItemGroup(placement: .topBarTrailing) {
+            if document != nil {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showVersions = true
                     } label: {
                         Image(systemName: "clock.arrow.circlepath")
                     }
                     .accessibilityLabel("Version history")
-
-                    if document.status == .draft {
-                        Button {
-                            Task { await docs.togglePin(id: document.id, using: auth) }
-                        } label: {
-                            Image(systemName: document.pinned ? "pin.fill" : "pin")
-                        }
-                        .disabled(docs.pinningDocumentIDs.contains(document.id))
-                        .accessibilityLabel(document.pinned ? "Unpin" : "Pin")
-                    }
                 }
             }
         }
@@ -451,18 +516,22 @@ private struct DocumentDetailView: View {
                     InlineErrorBanner(message: error) {
                         Task { await docs.loadDocument(id: document.id, using: auth, force: true) }
                     }
+                    .padding(.horizontal, 20)
                 }
                 documentHeader(document)
+                    .padding(.horizontal, 20)
                 Divider()
+                    .padding(.horizontal, 20)
                 if document.kind == .html {
                     HTMLView(html: document.content, contentHeight: $htmlHeight)
                         .frame(height: max(htmlHeight, 1))
                         .frame(maxWidth: .infinity)
                 } else {
                     MarkdownDocumentView(content: document.content)
+                        .padding(.horizontal, 16)
                 }
             }
-            .padding(20)
+            .padding(.vertical, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollBounceBehavior(.always)

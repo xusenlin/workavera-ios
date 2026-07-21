@@ -42,6 +42,31 @@ enum JSONValue: Codable, Equatable, Sendable {
         return value
     }
 
+    var boolValue: Bool? {
+        guard case .bool(let value) = self else { return nil }
+        return value
+    }
+
+    var intValue: Int? {
+        guard case .number(let value) = self else { return nil }
+        return Int(value)
+    }
+
+    var arrayValue: [JSONValue]? {
+        guard case .array(let value) = self else { return nil }
+        return value
+    }
+
+    /// Tool outputs may arrive either as a JSON object or as a string holding
+    /// serialized JSON; this normalizes both to the decoded value.
+    var decodingEmbeddedJSON: JSONValue {
+        guard case .string(let string) = self,
+              let data = string.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(JSONValue.self, from: data)
+        else { return self }
+        return decoded
+    }
+
     var objectValue: [String: JSONValue]? {
         guard case .object(let value) = self else { return nil }
         return value

@@ -315,10 +315,9 @@ final class ChatStore {
             selectedConversationID = created.id
             hasLoaded = true
             errorMessage = nil
-            await refresh(using: auth, page: 0)
-            selectedConversationID = conversations.contains(where: { $0.id == created.id })
-                ? created.id
-                : selectedConversationID
+            // The list isn't refreshed here: the created conversation is shown
+            // optimistically and the caller navigates straight into it; the
+            // list reconciles with the server when the user returns to it.
             return created
         } catch {
             errorMessage = error.localizedDescription

@@ -512,6 +512,16 @@ final class AuthStore {
         try await makeClient().setDocumentPinned(id: id, pinned: pinned, token: token)
     }
 
+    func setDocumentArchived(id: String, archived: Bool) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().setDocumentArchived(id: id, archived: archived, token: token)
+    }
+
+    func deleteDocument(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteDocument(id: id, token: token)
+    }
+
     func loadAPIKeys(strategy: DataLoadStrategy = .networkOnly) async throws -> [WorkaveraAPIKey] {
         guard let token else { throw sessionUnavailableError }
         return try await load(strategy: strategy) { client in

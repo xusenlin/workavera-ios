@@ -12,6 +12,7 @@ struct ChatView: View {
     @State private var renameTarget: ChatConversation?
     @State private var renameDraft = ""
     @State private var deleteTarget: ChatConversation?
+    @State private var navigationConversationID: String?
 
     var body: some View {
         Group {
@@ -22,6 +23,16 @@ struct ChatView: View {
             }
         }
         .background(Color(.systemGroupedBackground))
+        .navigationDestination(item: $navigationConversationID) { id in
+            ChatConversationDetailView(conversationID: id)
+                .onAppear { store.select(id) }
+        }
+        .onChange(of: navigationConversationID) { oldValue, newValue in
+            // Refresh the list only when returning from a conversation.
+            if oldValue != nil, newValue == nil {
+                Task { await store.refresh(using: auth) }
+            }
+        }
         .navigationTitle("Chat")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -195,7 +206,14 @@ struct ChatView: View {
 
     private func createConversation() {
         searchInput = ""
-        Task { _ = try? await store.create(using: auth) }
+        Task {
+            guard let created = try? await store.create(using: auth) else { return }
+            // Compact layout navigates into the new conversation; the regular
+            // split view already shows it via the selected conversation.
+            if horizontalSizeClass != .regular {
+                navigationConversationID = created.id
+            }
+        }
     }
 
     private func clearSearch() {
@@ -209,9 +227,8 @@ struct ChatView: View {
     ) -> some View {
         HStack(spacing: 8) {
             if usesNavigationLink {
-                NavigationLink {
-                    ChatConversationDetailView(conversationID: conversation.id)
-                        .onAppear { store.select(conversation.id) }
+                Button {
+                    navigationConversationID = conversation.id
                 } label: {
                     ChatConversationRow(
                         conversation: conversation,
@@ -420,6 +437,15 @@ private struct ChatConversationEmptyView: View {
     }
 }
 
+/// Tracks the message list's total height so the initial scroll-to-end can
+/// re-pin while lazy cells are still settling into their real heights.
+private struct ChatContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 private struct ChatConversationDetailView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(ChatStore.self) private var store
@@ -434,6 +460,20 @@ private struct ChatConversationDetailView: View {
     @State private var showDelete = false
     @State private var draft = ""
     @State private var selectedModelID = ""
+    /// Whether the user is at (or near) the bottom of the history; streaming
+    /// only keeps scrolling to the end while this holds.
+    @State private var isPinnedToBottom = true
+    /// Guards the drag-to-dismiss-keyboard gesture so one drag dismisses at
+    /// most once.
+    @State private var dragDismissedKeyboard = false
+    /// Snapshot of `isPinnedToBottom` taken when the keyboard starts
+    /// animating; the bottom sentinel leaves the visible area during the
+    /// transition, so the live value cannot be trusted at Did*.
+    @State private var resumePinAfterKeyboard = false
+    /// While true (short window after the history first appears), any change
+    /// in the lazy content's measured height re-pins the list to the end.
+    @State private var initialScrollPending = false
+    @FocusState private var composerFocused: Bool
 
     private var conversation: ChatConversation? {
         store.conversations.first { $0.id == conversationID }
@@ -463,19 +503,25 @@ private struct ChatConversationDetailView: View {
     var body: some View {
         Group {
             if let conversation {
-                VStack(spacing: 0) {
-                    messageHistory
-                    ChatComposer(
-                        draft: $draft,
-                        selectedModelID: $selectedModelID,
-                        models: modelStore.models,
-                        contextInfo: contextInfo,
-                        isLoading: isLoadingMessages,
-                        isGenerating: isGenerating,
-                        send: submit,
-                        stop: { Task { await store.stopRun(conversationID: conversationID, using: auth) } }
-                    )
-                }
+                // The composer lives in a bottom safe-area inset: the system
+                // rides it on top of the keyboard and animates the message
+                // list's insets natively, instead of resizing the scroll
+                // view's frame (which caused jumps and blank flashes).
+                messageHistory
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        ChatComposer(
+                            draft: $draft,
+                            selectedModelID: $selectedModelID,
+                            composerFocused: $composerFocused,
+                            models: modelStore.models,
+                            contextInfo: contextInfo,
+                            isLoading: isLoadingMessages,
+                            isGenerating: isGenerating,
+                            send: submit,
+                            stop: { Task { await store.stopRun(conversationID: conversationID, using: auth) } }
+                        )
+                        .background(Color(.systemBackground))
+                    }
                 .navigationTitle(conversation.title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -559,21 +605,106 @@ private struct ChatConversationDetailView: View {
                                 }
                             }
                         }
+
+                        // Bottom sentinel: its visibility tells whether the
+                        // user is near the end of the history. The height
+                        // doubles as the tolerance for what counts as "at
+                        // the bottom".
+                        Color.clear
+                            .frame(height: 48)
+                            .onAppear { isPinnedToBottom = true }
+                            .onDisappear { isPinnedToBottom = false }
                     }
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 20)
                     .frame(maxWidth: .infinity)
+                    .background(
+                        GeometryReader { geometry in
+                            Color.clear
+                                .preference(key: ChatContentHeightKey.self, value: geometry.size.height)
+                        }
+                    )
                 }
-                .defaultScrollAnchor(.bottom)
-                .onChange(of: messageScrollSignature) { _, _ in
+                // Re-pin to the end while the lazy stack's heights are still
+                // settling (cells render with real heights only after the
+                // first jump, so a single scrollTo can land mid-content).
+                .onPreferenceChange(ChatContentHeightKey.self) { _ in
+                    guard initialScrollPending, let lastID = messages.last?.id else { return }
+                    proxy.scrollTo(lastID, anchor: .bottom)
+                }
+                // The composer sits in a bottom safe-area inset, so the
+                // scroll view's frame never resizes — only its insets move
+                // with the keyboard, animated natively by the system.
+                // `.always` bounce keeps the list draggable even when the
+                // content fits the viewport, so keyboard dismissal works on
+                // short conversations too.
+                .scrollBounceBehavior(.always)
+                // System interactive dismissal is kept as progressive
+                // enhancement; `.textSelection` inside messages can swallow
+                // it, hence the explicit drag fallback below.
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10)
+                        .onChanged { value in
+                            guard composerFocused,
+                                  !dragDismissedKeyboard,
+                                  value.translation.height > 32 else { return }
+                            dragDismissedKeyboard = true
+                            composerFocused = false
+                        }
+                        .onEnded { _ in
+                            dragDismissedKeyboard = false
+                        }
+                )
+                // If the user was pinned to the end, snap back once the
+                // keyboard animation settles — this keeps the last message
+                // visible and re-reveals the bottom sentinel so streaming
+                // follow survives. The pinned state is snapshotted at Will*
+                // because the sentinel leaves the visible area during the
+                // transition.
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                    resumePinAfterKeyboard = isPinnedToBottom
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                    resumePinAfterKeyboard = isPinnedToBottom
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                    snapToEndAfterKeyboard(proxy)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                    snapToEndAfterKeyboard(proxy)
+                }
+                .onAppear {
+                    // Jump to the end immediately, then keep re-pinning via
+                    // ChatContentHeightKey for a short settle window: lazy
+                    // cells (cards, images) resolve their real heights only
+                    // after the first layout, which otherwise leaves the
+                    // list stranded mid-content on longer conversations.
                     guard let lastID = messages.last?.id else { return }
+                    initialScrollPending = true
+                    proxy.scrollTo(lastID, anchor: .bottom)
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(600))
+                        initialScrollPending = false
+                    }
+                }
+                .onChange(of: messageScrollSignature) { _, _ in
+                    guard isPinnedToBottom, let lastID = messages.last?.id else { return }
                     withAnimation(.easeOut(duration: 0.18)) {
                         proxy.scrollTo(lastID, anchor: .bottom)
                     }
                 }
             }
         }
+    }
+
+    /// One precise, unanimated snap after the keyboard animation has fully
+    /// settled — no estimated mid-animation scrolling.
+    private func snapToEndAfterKeyboard(_ proxy: ScrollViewProxy) {
+        defer { resumePinAfterKeyboard = false }
+        guard resumePinAfterKeyboard, let lastID = messages.last?.id else { return }
+        proxy.scrollTo(lastID, anchor: .bottom)
     }
 
     private var messageScrollSignature: String {
@@ -656,6 +787,7 @@ private struct ChatConversationDetailView: View {
 private struct ChatComposer: View {
     @Binding var draft: String
     @Binding var selectedModelID: String
+    @FocusState.Binding var composerFocused: Bool
 
     let models: [LLMModelConfiguration]
     let contextInfo: ChatContextInfo?
@@ -680,6 +812,7 @@ private struct ChatComposer: View {
             )
             .lineLimit(1...6)
             .textFieldStyle(.plain)
+            .focused($composerFocused)
             .disabled(isLoading || isGenerating || models.isEmpty)
 
             HStack(spacing: 10) {
@@ -1133,6 +1266,11 @@ private struct ChatMessageView: View {
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Color.accentColor.opacity(0.12), in: Capsule())
+                        .phaseAnimator([0.4, 1.0]) { badge, phase in
+                            badge.opacity(phase)
+                        } animation: { _ in
+                            .easeInOut(duration: 0.8)
+                        }
                 }
             }
             .font(.caption2)
@@ -1154,6 +1292,9 @@ private struct ChatMessageView: View {
                 .frame(maxWidth: 620, alignment: .trailing)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
+                    if showsWaitingIndicator {
+                        TypingDotsView()
+                    }
                     ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
                         AssistantMessagePartView(
                             part: part,
@@ -1183,6 +1324,17 @@ private struct ChatMessageView: View {
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
     }
 
+    /// True while the run is active but nothing visible has arrived yet (no
+    /// text, no tool call) — the typing dots fill this otherwise blank wait.
+    private var showsWaitingIndicator: Bool {
+        guard !isUser else { return false }
+        let status = message.metadata?.status
+        guard status == .streaming || status == .pending else { return false }
+        return !message.parts.contains { part in
+            (part.text?.isEmpty == false) || part.type == "dynamic-tool"
+        }
+    }
+
     private func approvalData(for toolPart: ChatMessagePart) -> JSONValue? {
         guard toolPart.type == "dynamic-tool", let toolCallID = toolPart.toolCallID else { return nil }
         return message.parts.first(where: { part in
@@ -1190,6 +1342,32 @@ private struct ChatMessageView: View {
                   let object = part.data?.objectValue else { return false }
             return object["toolCallId"]?.stringValue == toolCallID
         })?.data
+    }
+}
+
+/// Three staggered pulsing dots shown while the assistant's first token is
+/// still on its way, so the wait never looks frozen.
+private struct TypingDotsView: View {
+    @State private var animating = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Color(.tertiaryLabel))
+                    .frame(width: 6, height: 6)
+                    .scaleEffect(animating ? 1 : 0.55)
+                    .opacity(animating ? 1 : 0.35)
+                    .animation(
+                        .easeInOut(duration: 0.55)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.16),
+                        value: animating
+                    )
+            }
+        }
+        .padding(.vertical, 4)
+        .onAppear { animating = true }
     }
 }
 
@@ -1229,13 +1407,19 @@ private struct AssistantMessagePartView: View {
                 ReasoningDisclosure(text: text, isStreaming: isStreaming)
             }
         case "dynamic-tool":
-            ChatToolCard(
-                part: part,
-                approvalData: approvalData,
-                conversationID: conversationID,
-                runActive: runActive,
-                messageStatus: messageStatus
-            )
+            if part.toolName == "system_memory_upsert" || part.toolName == "system_memory_forget" {
+                MemoryToolCard(part: part)
+            } else if part.toolName?.hasPrefix("docs_") == true {
+                DocsToolCard(part: part)
+            } else {
+                ChatToolCard(
+                    part: part,
+                    approvalData: approvalData,
+                    conversationID: conversationID,
+                    runActive: runActive,
+                    messageStatus: messageStatus
+                )
+            }
         case "source-url":
             if let urlString = part.url, let url = URL(string: urlString) {
                 Link(destination: url) {
@@ -1280,6 +1464,473 @@ private struct ChatCompactionStatus: View {
         case "started": "Compacting context…"
         case "failed": "Context compaction failed — continued with full history"
         default: "Older messages were compacted into a summary"
+        }
+    }
+}
+
+/// Purpose-built card for the `system_memory_upsert` / `system_memory_forget`
+/// tools. Unlike the generic tool card it renders the memory itself — category,
+/// origin and content — instead of raw JSON, and always stays expanded because
+/// the content is the point of the tool call.
+private struct MemoryToolCard: View {
+    let part: ChatMessagePart
+
+    private var isForget: Bool { part.toolName == "system_memory_forget" }
+    private var isWorking: Bool {
+        part.state == "input-streaming" || part.state == "input-available"
+    }
+    private var isError: Bool { part.state == "output-error" }
+    private var isRemoval: Bool {
+        isForget || payload?.action == .forgotten
+    }
+
+    /// Prefer the settled result; fall back to the input while the call is
+    /// still running so the card can preview what is being saved.
+    private var payload: MemoryToolPayload? {
+        if part.state == "output-available", let result = MemoryToolPayload(output: part.output) {
+            return result
+        }
+        return MemoryToolPayload(input: part.input)
+    }
+
+    /// Monochrome by default to match the app accent; red only for failures
+    /// and removals, where the color carries meaning.
+    private var tint: Color {
+        if isError || isRemoval { return .red }
+        return .accentColor
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: iconName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        tint.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.medium))
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                statusAccessory
+            }
+            if let content = payload?.content, !content.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(tint.opacity(0.6))
+                        .frame(width: 3)
+                    Text(content)
+                        .font(.callout)
+                        .foregroundStyle(isRemoval || payload?.action == .undone ? .secondary : .primary)
+                        .strikethrough(payload?.action == .forgotten)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+            }
+            if isError, let errorText = part.errorText {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(12)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35))
+        )
+    }
+
+    private var title: String {
+        if isError { return "Memory action failed" }
+        if isWorking { return isForget ? "Forgetting memory…" : "Saving memory…" }
+        switch payload?.action {
+        case .forgotten: return "Memory forgotten"
+        case .undone: return "Memory change undone"
+        case .unchanged: return "Already remembered"
+        case .updated: return "Memory updated"
+        case .created:
+            return payload?.origin == .automatic ? "Remembered automatically" : "Memory saved"
+        default:
+            return isForget ? "Memory forgotten" : "Memory saved"
+        }
+    }
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if let category = payload?.category { parts.append(category.label) }
+        if let origin = payload?.origin, !isRemoval { parts.append(origin.label) }
+        return parts.isEmpty ? "Memory" : parts.joined(separator: " · ")
+    }
+
+    private var iconName: String {
+        if isError { return "exclamationmark.triangle.fill" }
+        if isRemoval { return "trash.fill" }
+        if payload?.action == .undone { return "arrow.uturn.backward" }
+        if let category = payload?.category { return category.icon }
+        return "brain"
+    }
+
+    @ViewBuilder
+    private var statusAccessory: some View {
+        if isWorking {
+            ProgressView().controlSize(.mini)
+        } else if isError {
+            Image(systemName: "xmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+        } else {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        }
+    }
+}
+
+/// Purpose-built card for the `docs_*` assistant tools. Collapsed by default:
+/// the header shows the operation and a one-line outcome, while expanding
+/// reveals the affected documents (title, location, revision, excerpt) instead
+/// of the raw JSON the generic tool card would show.
+private struct DocsToolCard: View {
+    let part: ChatMessagePart
+
+    @State private var expanded = false
+
+    private var toolName: String { part.toolName ?? "" }
+    private var isWorking: Bool {
+        part.state == "input-streaming" || part.state == "input-available"
+    }
+    private var isError: Bool { part.state == "output-error" }
+    private var tint: Color { isError ? .red : .accentColor }
+
+    private var payload: DocsToolPayload? {
+        guard part.state == "output-available" else { return nil }
+        return DocsToolPayload(toolName: toolName, output: part.output)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            expandedContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: meta.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        tint.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(meta.label)
+                        .font(.subheadline.weight(.medium))
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if isWorking {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35))
+        )
+    }
+
+    private var meta: (label: String, icon: String, working: String) {
+        switch toolName {
+        case "docs_search": ("Search Documents", "magnifyingglass", "Searching…")
+        case "docs_get": ("Read Document", "doc.text", "Loading…")
+        case "docs_upsert": ("Save Document", "square.and.pencil", "Saving…")
+        case "docs_move": ("Move Documents", "folder", "Moving…")
+        case "docs_replace": ("Replace Text", "text.magnifyingglass", "Replacing…")
+        case "docs_write_chunk": ("Write Document", "square.and.pencil", "Writing…")
+        case "docs_list_folders": ("Document Folders", "folder", "Loading…")
+        default: ("Document Tool", "doc", "Working…")
+        }
+    }
+
+    private var subtitle: String {
+        if isWorking { return meta.working }
+        if isError { return "Failed" }
+        guard let payload else { return "Completed" }
+        switch toolName {
+        case "docs_search":
+            let count = payload.documents.count
+            return count == 1 ? "1 document" : "\(count) documents"
+        case "docs_get":
+            return payload.documents.first?.title ?? "Completed"
+        case "docs_upsert":
+            guard let doc = payload.documents.first else { return "Completed" }
+            let revision = doc.revision.map { " · R\($0)" } ?? ""
+            if payload.isCreation { return "Created" + revision }
+            return (payload.changed == false ? "No changes" : "Saved") + revision
+        case "docs_replace":
+            let matches = payload.matches.map { $0 == 1 ? "1 match" : "\($0) matches" } ?? "Done"
+            return matches + (payload.documents.first?.revision.map { " · R\($0)" } ?? "")
+        case "docs_move":
+            return "Moved \(payload.moveSucceeded) of \(payload.moveTotal)"
+        case "docs_write_chunk":
+            var parts: [String] = []
+            if let length = payload.chunkContentLength { parts.append("Wrote \(length) characters") }
+            if let revision = payload.chunkRevision { parts.append("R\(revision)") }
+            return parts.isEmpty ? "Completed" : parts.joined(separator: " · ")
+        case "docs_list_folders":
+            let count = payload.folders.count
+            return count == 1 ? "1 folder" : "\(count) folders"
+        default:
+            return "Completed"
+        }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if isWorking, let inputSummary {
+                Label(inputSummary, systemImage: meta.icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let payload {
+                switch toolName {
+                case "docs_search":
+                    documentList(payload.documents)
+                case "docs_get", "docs_upsert", "docs_replace":
+                    if let doc = payload.documents.first {
+                        documentDetail(doc, payload: payload)
+                    }
+                case "docs_move":
+                    moveResultsList(payload)
+                case "docs_write_chunk":
+                    chunkDetail(payload)
+                case "docs_list_folders":
+                    folderList(payload.folders)
+                default:
+                    EmptyView()
+                }
+            }
+            if isError, let errorText = part.errorText {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    /// While the call runs, preview what it is operating on from the input.
+    private var inputSummary: String? {
+        let input = part.input?.objectValue
+        switch toolName {
+        case "docs_search": return input?["query"]?.stringValue
+        case "docs_upsert": return input?["title"]?.stringValue
+        case "docs_replace": return input?["find"]?.stringValue
+        default: return nil
+        }
+    }
+
+    private static let searchRowLimit = 4
+    private static let moveRowLimit = 5
+
+    @ViewBuilder
+    private func documentList(_ documents: [DocsToolPayload.Document]) -> some View {
+        if documents.isEmpty {
+            Text("No matching documents")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(documents.prefix(Self.searchRowLimit)) { doc in
+                documentRow(doc)
+            }
+            if documents.count > Self.searchRowLimit {
+                Text("+\(documents.count - Self.searchRowLimit) more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func documentRow(_ doc: DocsToolPayload.Document) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: doc.kind == .html ? "chevron.left.forwardslash.chevron.right" : "doc.text")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(doc.title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                if let excerpt = doc.excerpt, !excerpt.isEmpty {
+                    Text(excerpt)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Text(documentMetaLine(doc))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func documentDetail(_ doc: DocsToolPayload.Document, payload: DocsToolPayload) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(doc.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                statusBadge(payload)
+            }
+            Text(documentMetaLine(doc))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            if let excerpt = doc.excerpt, !excerpt.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.6))
+                        .frame(width: 3)
+                    Text(excerpt)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func statusBadge(_ payload: DocsToolPayload) -> some View {
+        let text: String? = switch toolName {
+        case "docs_upsert":
+            payload.isCreation ? "Created" : (payload.changed == false ? "No changes" : "Saved")
+        case "docs_replace":
+            payload.matches.map { $0 == 1 ? "1 match" : "\($0) matches" }
+        default:
+            nil
+        }
+        if let text {
+            Text(text)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color(.tertiarySystemFill), in: Capsule())
+        }
+    }
+
+    private func documentMetaLine(_ doc: DocsToolPayload.Document) -> String {
+        var parts: [String] = []
+        if let location = doc.location { parts.append(location) }
+        if let revision = doc.revision { parts.append("R\(revision)") }
+        if let date = doc.updatedDate {
+            parts.append(date.formatted(.relative(presentation: .named)))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func chunkDetail(_ payload: DocsToolPayload) -> some View {
+        // The written text itself comes from the tool input; the output only
+        // carries the resulting revision and total content length.
+        if let content = part.input?.objectValue?["content"]?.stringValue, !content.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.6))
+                    .frame(width: 3)
+                Text(content)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        Text(chunkMetaLine(payload))
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+    }
+
+    private func chunkMetaLine(_ payload: DocsToolPayload) -> String {
+        var parts: [String] = []
+        if let revision = payload.chunkRevision { parts.append("R\(revision)") }
+        if let length = payload.chunkContentLength { parts.append("\(length) characters") }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func moveResultsList(_ payload: DocsToolPayload) -> some View {
+        ForEach(payload.moveResults.prefix(Self.moveRowLimit)) { result in
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: result.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(result.ok ? .green : .red)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.title ?? "Document")
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                    if let error = result.error, !error.isEmpty {
+                        Text(error)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                if let destination = result.destination {
+                    Label(destination, systemImage: "arrow.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        if payload.moveResults.count > Self.moveRowLimit {
+            Text("+\(payload.moveResults.count - Self.moveRowLimit) more")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func folderList(_ folders: [DocsToolPayload.Folder]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(folders) { folder in
+                    Label(folder.name, systemImage: "folder")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
         }
     }
 }

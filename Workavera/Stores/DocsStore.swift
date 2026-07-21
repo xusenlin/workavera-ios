@@ -21,6 +21,7 @@ final class DocsStore {
     private(set) var documentCache: [String: WorkspaceDocument] = [:]
     private(set) var loadingDocumentIDs: Set<String> = []
     private(set) var pinningDocumentIDs: Set<String> = []
+    private(set) var mutatingDocumentIDs: Set<String> = []
 
     private let defaults: UserDefaults
     private var cachedUserID: String?
@@ -48,6 +49,7 @@ final class DocsStore {
         documentCache = [:]
         loadingDocumentIDs = []
         pinningDocumentIDs = []
+        mutatingDocumentIDs = []
         cachedUserID = nil
     }
 
@@ -193,6 +195,37 @@ final class DocsStore {
             documents = previousDocuments
             documentCache = previousCache
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func setArchived(id: String, archived: Bool, using auth: AuthStore) async {
+        guard !mutatingDocumentIDs.contains(id) else { return }
+        mutatingDocumentIDs.insert(id)
+        defer { mutatingDocumentIDs.remove(id) }
+
+        do {
+            try await auth.setDocumentArchived(id: id, archived: archived)
+            documentCache.removeValue(forKey: id)
+            await refresh(using: auth)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func delete(id: String, using auth: AuthStore) async -> Bool {
+        guard !mutatingDocumentIDs.contains(id) else { return false }
+        mutatingDocumentIDs.insert(id)
+        defer { mutatingDocumentIDs.remove(id) }
+
+        do {
+            try await auth.deleteDocument(id: id)
+            documentCache.removeValue(forKey: id)
+            await refresh(using: auth)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 

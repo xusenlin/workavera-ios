@@ -949,6 +949,22 @@ struct PocketBaseClient {
         )
     }
 
+    func setDocumentArchived(id: String, archived: Bool, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/docs/\(id)/\(archived ? "archive" : "unarchive")",
+            method: "POST",
+            token: token
+        )
+    }
+
+    func deleteDocument(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/docs/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func getAPIKeys(token: String) async throws -> [WorkaveraAPIKey] {
         try await listAllRecords(
             collection: "api_keys",
