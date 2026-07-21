@@ -29,6 +29,7 @@ struct CalendarView: View {
     @State private var selectedItem: CalendarItem?
     @State private var editor: CalendarEditorContext?
     @State private var deletingEvent: AppEvent?
+    @State private var showAllEvents = false
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
 
@@ -63,7 +64,14 @@ struct CalendarView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Calendar")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showAllEvents = true
+                } label: {
+                    Image(systemName: "list.bullet")
+                }
+                .accessibilityLabel("All events")
+
                 Button {
                     editor = .new(on: selectedDate)
                 } label: {
@@ -109,6 +117,9 @@ struct CalendarView: View {
                 selectedDate = saved.startAt
                 displayedMonth = saved.startAt
             }
+        }
+        .sheet(isPresented: $showAllEvents) {
+            AllEventsListSheet()
         }
         .alert(
             deleteTitle,
@@ -475,6 +486,207 @@ struct CalendarView: View {
         let start = calendarText(occurrence.startAt, timezone: calendar.timeZone, timeStyle: .short)
         let end = calendarText(occurrence.endAt, timezone: calendar.timeZone, timeStyle: .short)
         return "\(start) – \(end)"
+    }
+}
+
+private enum AllEventsSheetItem: Identifiable {
+    case detail(AppEventOccurrence)
+    case editor(CalendarEditorContext)
+
+    var id: String {
+        switch self {
+        case .detail(let occurrence): "detail-\(occurrence.id)"
+        case .editor(let context): "editor-\(context.id)"
+        }
+    }
+}
+
+/// A browsable list of every custom event, reachable from the calendar
+/// toolbar. Tapping a row opens its read-only detail; swipe for quick
+/// edit/delete, matching standard iOS list interactions.
+private struct AllEventsListSheet: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(CalendarStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var sheetItem: AllEventsSheetItem?
+    @State private var deletingEvent: AppEvent?
+
+    private var timezone: String { store.timezone }
+    private var events: [AppEvent] { store.events }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if events.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Custom Events", systemImage: "calendar")
+                    } description: {
+                        Text("Events you create appear here.")
+                    } actions: {
+                        Button("New Event") { sheetItem = .editor(.new(on: .now)) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    List {
+                        Section {
+                            ForEach(events) { event in
+                                Button {
+                                    sheetItem = .detail(occurrence(for: event))
+                                } label: {
+                                    EventRow(event: event, timezone: timezone)
+                                }
+                                .buttonStyle(.plain)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        deletingEvent = event
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    Button {
+                                        sheetItem = .editor(.edit(event))
+                                    } label: {
+                                        Label("Edit", systemImage: "square.and.pencil")
+                                    }
+                                    .tint(.blue)
+                                }
+                            }
+                        } header: {
+                            Text("\(events.count) \(events.count == 1 ? "event" : "events")")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("All Events")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        sheetItem = .editor(.new(on: .now))
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("New event")
+                }
+            }
+            .sheet(item: $sheetItem) { item in
+                switch item {
+                case .detail(let occurrence):
+                    EventDetailSheet(
+                        occurrence: occurrence,
+                        timezone: timezone,
+                        isMutating: store.mutatingEventIDs.contains(occurrence.event.id),
+                        onEdit: { sheetItem = .editor(.edit(occurrence.event)) },
+                        onDelete: {
+                            let event = occurrence.event
+                            sheetItem = nil
+                            deletingEvent = event
+                        }
+                    )
+                case .editor(let context):
+                    CalendarEventEditorSheet(context: context, timezone: timezone) { input in
+                        if let event = context.event {
+                            _ = try await store.update(event, input: input, using: auth)
+                        } else {
+                            _ = try await store.create(input, using: auth)
+                        }
+                    }
+                }
+            }
+            .alert(deleteTitle, isPresented: deletePresented) {
+                Button("Cancel", role: .cancel) { deletingEvent = nil }
+                Button("Delete Event", role: .destructive) {
+                    guard let event = deletingEvent else { return }
+                    Task {
+                        _ = await store.delete(event, using: auth)
+                        deletingEvent = nil
+                    }
+                }
+            } message: {
+                Text(deleteMessage)
+            }
+        }
+    }
+
+    private func occurrence(for event: AppEvent) -> AppEventOccurrence {
+        AppEventOccurrence(event: event, startAt: event.startAt, endAt: event.endAt)
+    }
+
+    private var deletePresented: Binding<Bool> {
+        Binding(get: { deletingEvent != nil }, set: { if !$0 { deletingEvent = nil } })
+    }
+
+    private var deleteTitle: String {
+        deletingEvent?.recurrenceFrequency == EventRecurrenceFrequency.none
+            ? "Delete event?"
+            : "Delete repeating event?"
+    }
+
+    private var deleteMessage: String {
+        deletingEvent?.recurrenceFrequency == EventRecurrenceFrequency.none
+            ? "This event will be permanently removed."
+            : "This permanently removes the entire repeating series."
+    }
+}
+
+private struct EventRow: View {
+    let event: AppEvent
+    let timezone: String
+
+    private var timeZone: TimeZone { TimeZone(identifier: timezone) ?? .current }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(event.color.color)
+                .frame(width: 4)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text(scheduleText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                if !event.location.isEmpty {
+                    Label(event.location, systemImage: "mappin")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if event.recurrenceFrequency != .none {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22)
+                    .accessibilityLabel("Repeats")
+            }
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private var scheduleText: String {
+        var parts = [calendarText(event.startAt, timezone: timeZone, format: "EEE, MMM d, yyyy")]
+        if event.allDay {
+            parts.append("All day")
+        } else {
+            let start = calendarText(event.startAt, timezone: timeZone, timeStyle: .short)
+            let end = calendarText(event.endAt, timezone: timeZone, timeStyle: .short)
+            parts.append("\(start) – \(end)")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

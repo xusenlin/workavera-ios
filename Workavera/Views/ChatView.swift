@@ -331,15 +331,15 @@ private struct ChatConversationRow: View {
                 )
 
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Text(conversation.title)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     if conversation.pinned {
                         Image(systemName: "pin.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }

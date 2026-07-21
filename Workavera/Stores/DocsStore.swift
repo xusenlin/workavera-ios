@@ -5,6 +5,7 @@ import Observation
 @Observable
 final class DocsStore {
     static let pageSize = 15
+    private static let selectionCachePrefix = "workavera.docs.selection:"
 
     var query = ""
     private(set) var view: DocsViewFilter = .myDocuments
@@ -21,13 +22,20 @@ final class DocsStore {
     private(set) var loadingDocumentIDs: Set<String> = []
     private(set) var pinningDocumentIDs: Set<String> = []
 
+    private let defaults: UserDefaults
     private var cachedUserID: String?
     private var loadSequence = 0
+    private var selectionCacheKey: String?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     func reset() {
         loadSequence += 1
         query = ""
         view = .myDocuments
+        selectionCacheKey = nil
         documents = []
         folders = []
         projects = []
@@ -58,7 +66,8 @@ final class DocsStore {
         using auth: AuthStore,
         page requestedPage: Int? = nil,
         strategy: DataLoadStrategy = .networkOnly,
-        reportError: Bool = true
+        reportError: Bool = true,
+        reconcile: Bool = true
     ) async {
         guard prepareCache(for: auth) else { return }
         let targetPage = view.usesPagination ? max(0, requestedPage ?? page) : 0
@@ -84,6 +93,23 @@ final class DocsStore {
             page = max(0, snapshot.page - 1)
             totalPages = max(1, snapshot.totalPages)
             totalItems = snapshot.totalItems
+
+            // A persisted folder/project selection may point at something that
+            // was deleted; fall back to My Documents and reload once.
+            if reconcile, !isCurrentViewAvailable {
+                view = .myDocuments
+                page = 0
+                persistSelection()
+                await refresh(
+                    using: auth,
+                    page: 0,
+                    strategy: strategy,
+                    reportError: reportError,
+                    reconcile: false
+                )
+                return
+            }
+
             hasLoaded = true
             errorMessage = nil
 
@@ -114,6 +140,8 @@ final class DocsStore {
         if errorMessage != nil {
             view = previousView
             page = previousPage
+        } else {
+            persistSelection()
         }
     }
 
@@ -251,6 +279,32 @@ final class DocsStore {
         guard cachedUserID != userID else { return true }
         reset()
         cachedUserID = userID
+        selectionCacheKey = Self.selectionCachePrefix + userID
+        restoreSelection()
         return true
+    }
+
+    private func restoreSelection() {
+        guard let selectionCacheKey,
+              let data = defaults.data(forKey: selectionCacheKey),
+              let saved = try? JSONDecoder().decode(DocsViewFilter.self, from: data)
+        else { return }
+        view = saved
+    }
+
+    private func persistSelection() {
+        guard let selectionCacheKey,
+              let data = try? JSONEncoder().encode(view) else { return }
+        defaults.set(data, forKey: selectionCacheKey)
+    }
+
+    /// A restored folder/project selection may point at something that was
+    /// since deleted; everything else is always valid.
+    private var isCurrentViewAvailable: Bool {
+        switch view {
+        case .folder(let id): folders.contains { $0.id == id }
+        case .project(let id): projects.contains { $0.id == id }
+        default: true
+        }
     }
 }

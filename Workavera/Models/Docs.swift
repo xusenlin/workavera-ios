@@ -10,7 +10,7 @@ enum DocumentStatus: String, Decodable, Hashable {
     case archived
 }
 
-enum DocsViewFilter: Hashable {
+enum DocsViewFilter: Hashable, Codable {
     case recent
     case pinned
     case myDocuments

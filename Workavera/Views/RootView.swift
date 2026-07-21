@@ -132,8 +132,6 @@ struct RootView: View {
             ProfileView()
         case .settings:
             SettingsView()
-        default:
-            PlaceholderView(section: section)
         }
     }
 }

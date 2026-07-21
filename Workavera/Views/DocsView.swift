@@ -340,7 +340,7 @@ private struct DocumentRow: View {
     let location: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(spacing: 14) {
             Image(systemName: document.kind == .html ? "chevron.left.forwardslash.chevron.right" : "doc.text")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(document.kind == .html ? .purple : Color.accentColor)
@@ -351,31 +351,35 @@ private struct DocumentRow: View {
                 )
 
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    if document.pinned {
-                        Image(systemName: "pin.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(document.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                }
-                Text("\(location) · v\(document.revision)")
+                Text(document.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Text(metaLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if document.updatedAt != .distantPast {
-                    Text(document.updatedAt.formatted(.relative(presentation: .named)))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
             }
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
+
+            if document.pinned {
+                Image(systemName: "pin.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
         }
         .contentShape(Rectangle())
+    }
+
+    /// Location, version, and last-updated time on a single line.
+    private var metaLine: String {
+        var parts = ["\(location) · v\(document.revision)"]
+        if document.updatedAt != .distantPast {
+            parts.append(document.updatedAt.formatted(.relative(presentation: .named)))
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

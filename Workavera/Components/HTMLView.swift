@@ -23,6 +23,10 @@ struct HTMLView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = true
+        // Disable the web view's own rubber-banding so a vertical drag isn't
+        // consumed by its scroll view; the outer SwiftUI ScrollView owns
+        // vertical scrolling. Horizontal scrolling (wide tables, <pre>) stays.
+        webView.scrollView.bounces = false
         webView.scrollView.alwaysBounceVertical = false
         webView.scrollView.alwaysBounceHorizontal = false
         webView.scrollView.showsVerticalScrollIndicator = false

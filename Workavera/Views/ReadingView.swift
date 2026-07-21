@@ -169,15 +169,15 @@ struct ReadingView: View {
                         )
 
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 8) {
                             Text(item.title)
                                 .font(.subheadline.weight(.medium))
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
                             if item.pinned {
                                 Image(systemName: "pin.fill")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(Color.accentColor)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
                         }
 
