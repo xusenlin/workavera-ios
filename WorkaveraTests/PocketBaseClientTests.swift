@@ -1185,6 +1185,108 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertEqual(signal?.record.id, "task-1")
     }
 
+    func testBoardRealtimeSubscribesToEveryBoardCollection() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/realtime")
+            if request.httpMethod == "POST" {
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertEqual(
+                    Set(fields["subscriptions"] as? [String] ?? []),
+                    Set([
+                        "board_projects/*",
+                        "board_project_preferences/*",
+                        "board_project_states/*",
+                        "board_tasks/*",
+                        "board_project_labels/*",
+                        "board_project_members/*"
+                    ])
+                )
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+            }
+
+            let body = Data(#"""
+            id:board-client
+            event:PB_CONNECT
+            data:{"clientId":"board-client"}
+
+            id:board-client
+            event:board_project_states/*
+            data:{"action":"update","record":{"id":"state-1"}}
+
+            """#.utf8)
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "text/event-stream"]
+                )!,
+                body
+            )
+        }
+
+        let stream = try makeClient().boardRealtimeSignals(token: "token-value")
+        var iterator = stream.makeAsyncIterator()
+        let signal = try await iterator.next()
+        XCTAssertEqual(signal?.action, .update)
+        XCTAssertEqual(signal?.record.id, "state-1")
+    }
+
+    func testDashboardRealtimeSubscribesToEverySummarySource() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/realtime")
+            if request.httpMethod == "POST" {
+                let fields = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertEqual(
+                    Set(fields["subscriptions"] as? [String] ?? []),
+                    Set([
+                        "board_projects/*",
+                        "board_tasks/*",
+                        "calendar_events/*",
+                        "reading_items/*"
+                    ])
+                )
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+            }
+
+            let body = Data(#"""
+            id:dashboard-client
+            event:PB_CONNECT
+            data:{"clientId":"dashboard-client"}
+
+            id:dashboard-client
+            event:reading_items/*
+            data:{"action":"update","record":{"id":"reading-1"}}
+
+            """#.utf8)
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "text/event-stream"]
+                )!,
+                body
+            )
+        }
+
+        let stream = try makeClient().dashboardRealtimeSignals(token: "token-value")
+        var iterator = stream.makeAsyncIterator()
+        let signal = try await iterator.next()
+        XCTAssertEqual(signal?.action, .update)
+        XCTAssertEqual(signal?.record.id, "reading-1")
+    }
+
     func testNotificationRealtimeHandshakeSubscribesAndDecodesCreateEvent() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/api/realtime")

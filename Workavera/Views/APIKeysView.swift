@@ -3,30 +3,17 @@ import UIKit
 
 struct APIKeysView: View {
     @Environment(AuthStore.self) private var auth
-    @State private var keys: [WorkaveraAPIKey] = []
-    @State private var isLoading = true
-    @State private var isRevoking = false
+    @Environment(APIKeysStore.self) private var store
     @State private var showCreateSheet = false
     @State private var revokeTarget: WorkaveraAPIKey?
-    @State private var errorMessage: String?
 
     var body: some View {
-        Group {
-            if isLoading && keys.isEmpty {
-                ProgressView("Loading API keys…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if keys.isEmpty {
-                ContentUnavailableView {
-                    Label("No API Keys", systemImage: "key")
-                } description: {
-                    Text("Create a key to connect MCP clients such as Claude Code or Cursor.")
-                } actions: {
-                    Button("Create Key") { showCreateSheet = true }
-                        .buttonStyle(.borderedProminent)
-                }
-            } else {
-                keyList
-            }
+        CachedContentView(
+            isLoading: store.isLoading,
+            hasLoaded: store.hasLoaded,
+            loadingTitle: "Loading API keys…"
+        ) {
+            keyList
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("API Keys")
@@ -39,10 +26,10 @@ struct APIKeysView: View {
                 .accessibilityLabel("Create API key")
             }
         }
-        .task { await loadKeys() }
+        .task { await store.loadForPresentation(using: auth) }
         .sheet(isPresented: $showCreateSheet) {
             CreateAPIKeySheet(serverAddress: auth.serverAddress) {
-                Task { await loadKeys() }
+                Task { await store.refresh(using: auth) }
             }
         }
         .alert(
@@ -58,19 +45,36 @@ struct APIKeysView: View {
         } message: {
             Text("The key will stop working immediately. Connected MCP clients will lose access.")
         }
-        .alert("Could Not Update API Keys", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "Unknown error")
-        }
     }
 
     private var keyList: some View {
         List {
+            if let errorMessage = store.errorMessage {
+                InlineErrorListSection(message: errorMessage) {
+                    Task { await store.refresh(using: auth) }
+                }
+            }
+
             Section {
-                ForEach(keys) { key in
-                    APIKeyRow(key: key, isRevoking: isRevoking && revokeTarget?.id == key.id) {
-                        revokeTarget = key
+                if store.keys.isEmpty {
+                    ContentUnavailableView {
+                        Label("No API Keys", systemImage: "key")
+                    } description: {
+                        Text("Create a key to connect MCP clients such as Claude Code or Cursor.")
+                    } actions: {
+                        Button("Create Key") { showCreateSheet = true }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                } else {
+                    ForEach(store.keys) { key in
+                        APIKeyRow(
+                            key: key,
+                            isRevoking: store.revokingKeyIDs.contains(key.id)
+                        ) {
+                            revokeTarget = key
+                        }
                     }
                 }
             } header: {
@@ -79,46 +83,27 @@ struct APIKeysView: View {
                 Text("Keys act on your behalf. The full secret is only shown once when created.")
             }
         }
-        .refreshable { await loadKeys() }
+        .refreshable { await store.refresh(using: auth) }
     }
 
     private var revokePresented: Binding<Bool> {
         Binding(
-            get: { revokeTarget != nil && !isRevoking },
-            set: { if !$0 && !isRevoking { revokeTarget = nil } }
+            get: {
+                guard let revokeTarget else { return false }
+                return !store.revokingKeyIDs.contains(revokeTarget.id)
+            },
+            set: {
+                guard let revokeTarget else { return }
+                if !$0 && !store.revokingKeyIDs.contains(revokeTarget.id) {
+                    self.revokeTarget = nil
+                }
+            }
         )
-    }
-
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )
-    }
-
-    private func loadKeys() async {
-        if keys.isEmpty { isLoading = true }
-        defer { isLoading = false }
-        do {
-            keys = try await auth.loadAPIKeys()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 
     private func revoke(_ key: WorkaveraAPIKey) async {
-        guard !isRevoking else { return }
-        isRevoking = true
-        do {
-            try await auth.revokeAPIKey(id: key.id)
-            keys.removeAll { $0.id == key.id }
-            revokeTarget = nil
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isRevoking = false
+        _ = await store.revoke(key, using: auth)
+        revokeTarget = nil
     }
 }
 

@@ -7,28 +7,12 @@ struct NotificationsView: View {
     @State private var showDeleteConfirmation = false
 
     var body: some View {
-        Group {
-            if !notifications.hasLoaded && notifications.isLoading {
-                ProgressView("Loading notifications…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if notifications.items.isEmpty {
-                ContentUnavailableView {
-                    Label("No Notifications", systemImage: "bell.slash")
-                } description: {
-                    if let error = notifications.errorMessage {
-                        Text(error)
-                    } else {
-                        Text("New task reminders, calendar events, and model shares will appear here.")
-                    }
-                } actions: {
-                    Button("Refresh") {
-                        Task { await notifications.refresh(using: auth) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            } else {
-                notificationList
-            }
+        CachedContentView(
+            isLoading: notifications.isLoading,
+            hasLoaded: notifications.hasLoaded,
+            loadingTitle: "Loading notifications…"
+        ) {
+            notificationList
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Notifications")
@@ -40,11 +24,6 @@ struct NotificationsView: View {
                     }
                 }
             }
-        }
-        .alert("Could Not Update Notifications", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { notifications.clearError() }
-        } message: {
-            Text(notifications.errorMessage ?? "Unknown error")
         }
         .alert(
             "Delete Notification?",
@@ -74,23 +53,49 @@ struct NotificationsView: View {
             }
             .background(Color(.systemGroupedBackground))
         }
+        .task(id: auth.user?.id) {
+            await notifications.loadAutomatically(using: auth)
+        }
     }
 
     private var notificationList: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(Array(notifications.items.enumerated()), id: \.element.id) { index, notification in
-                    if index > 0 {
-                        Divider()
-                            .padding(.leading, 62)
+            VStack(spacing: 16) {
+                if let errorMessage = notifications.errorMessage {
+                    InlineErrorBanner(message: errorMessage) {
+                        Task { await notifications.refresh(using: auth) }
                     }
-                    row(notification)
+                }
+
+                if notifications.items.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Notifications", systemImage: "bell.slash")
+                    } description: {
+                        Text("New task reminders, calendar events, and model shares will appear here.")
+                    } actions: {
+                        Button("Refresh") {
+                            Task { await notifications.refresh(using: auth) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 36)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(notifications.items.enumerated()), id: \.element.id) { index, notification in
+                            if index > 0 {
+                                Divider()
+                                    .padding(.leading, 62)
+                            }
+                            row(notification)
+                        }
+                    }
+                    .background(
+                        Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
                 }
             }
-            .background(
-                Color(.secondarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-            )
             .padding(20)
         }
         .scrollBounceBehavior(.always)
@@ -245,10 +250,4 @@ struct NotificationsView: View {
         )
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { notifications.errorMessage != nil && !notifications.items.isEmpty },
-            set: { if !$0 { notifications.clearError() } }
-        )
-    }
 }

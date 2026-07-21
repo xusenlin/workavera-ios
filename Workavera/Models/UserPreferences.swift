@@ -1,6 +1,6 @@
 import Foundation
 
-struct UserPreferences: Decodable, Identifiable, Equatable {
+struct UserPreferences: Codable, Identifiable, Equatable {
     let id: String
     let owner: String
     var theme: AppAppearance

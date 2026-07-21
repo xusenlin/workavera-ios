@@ -10,6 +10,15 @@ struct ProfileView: View {
 
     var body: some View {
         Form {
+            if let errorMessage {
+                InlineErrorListSection(
+                    message: errorMessage,
+                    actionTitle: "Dismiss"
+                ) {
+                    self.errorMessage = nil
+                }
+            }
+
             Section {
                 VStack(spacing: 12) {
                     AvatarView(url: auth.avatarURL, name: auth.user?.displayName ?? "?", size: 96)
@@ -89,11 +98,6 @@ struct ProfileView: View {
         .sheet(isPresented: $showChangePassword) {
             ChangePasswordSheet()
         }
-        .alert("Could Not Update Status", isPresented: errorPresented) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "Unknown error")
-        }
     }
 
     private var statusBinding: Binding<UserStatus> {
@@ -111,12 +115,6 @@ struct ProfileView: View {
         )
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )
-    }
 }
 
 private struct EditProfileSheet: View {
@@ -180,9 +178,11 @@ private struct EditProfileSheet: View {
                 }
 
                 if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.circle.fill")
-                            .foregroundStyle(.red)
+                    InlineErrorListSection(
+                        message: errorMessage,
+                        actionTitle: "Dismiss"
+                    ) {
+                        self.errorMessage = nil
                     }
                 }
             }
@@ -314,9 +314,11 @@ private struct ChangePasswordSheet: View {
                 }
 
                 if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.circle.fill")
-                            .foregroundStyle(.red)
+                    InlineErrorListSection(
+                        message: errorMessage,
+                        actionTitle: "Dismiss"
+                    ) {
+                        self.errorMessage = nil
                     }
                 }
             }

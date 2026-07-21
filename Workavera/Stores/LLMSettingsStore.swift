@@ -9,6 +9,7 @@ final class LLMSettingsStore {
     private(set) var isLoadingModels = false
     private(set) var isLoadingTargets = false
     private(set) var hasLoadedModels = false
+    private(set) var hasLoadedTargets = false
     private(set) var errorMessage: String?
     private(set) var mutatingModelIDs: Set<String> = []
     private(set) var isSharing = false
@@ -27,18 +28,29 @@ final class LLMSettingsStore {
         isLoadingModels = false
         isLoadingTargets = false
         hasLoadedModels = false
+        hasLoadedTargets = false
         errorMessage = nil
         mutatingModelIDs = []
         isSharing = false
         cachedUserID = nil
     }
 
-    func loadModelsIfNeeded(using auth: AuthStore) async {
-        guard prepareCache(for: auth), !hasLoadedModels, !isLoadingModels else { return }
-        await refreshModels(using: auth)
+    func loadModelsForPresentation(using auth: AuthStore) async {
+        guard prepareCache(for: auth), !isLoadingModels else { return }
+        await CachedPageLoader.load(
+            hasPresentedContent: hasLoadedModels,
+            cache: {
+                await refreshModels(using: auth, strategy: .cacheOnly, reportError: false)
+            },
+            network: { await refreshModels(using: auth) }
+        )
     }
 
-    func refreshModels(using auth: AuthStore) async {
+    func refreshModels(
+        using auth: AuthStore,
+        strategy: DataLoadStrategy = .networkOnly,
+        reportError: Bool = true
+    ) async {
         guard prepareCache(for: auth) else { return }
         loadSequence += 1
         let sequence = loadSequence
@@ -47,7 +59,7 @@ final class LLMSettingsStore {
             if sequence == loadSequence { isLoadingModels = false }
         }
         do {
-            let loaded = try await auth.loadLLMModels()
+            let loaded = try await auth.loadLLMModels(strategy: strategy)
             guard sequence == loadSequence else { return }
             models = loaded
             hasLoadedModels = true
@@ -56,28 +68,55 @@ final class LLMSettingsStore {
             return
         } catch {
             guard sequence == loadSequence else { return }
-            hasLoadedModels = true
-            errorMessage = error.localizedDescription
+            if reportError {
+                hasLoadedModels = true
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
-    func loadShareTargets(using auth: AuthStore) async {
+    func loadShareTargets(
+        using auth: AuthStore,
+        strategy: DataLoadStrategy = .networkOnly,
+        reportError: Bool = true
+    ) async {
         guard prepareCache(for: auth), !isLoadingTargets else { return }
         isLoadingTargets = true
         defer { isLoadingTargets = false }
         do {
-            shareTargets = try await auth.loadLLMShareTargets()
+            shareTargets = try await auth.loadLLMShareTargets(strategy: strategy)
+            hasLoadedTargets = true
             errorMessage = nil
+        } catch is CancellationError {
+            return
         } catch {
-            errorMessage = error.localizedDescription
+            if reportError {
+                hasLoadedTargets = true
+                errorMessage = error.localizedDescription
+            }
         }
+    }
+
+    func loadShareTargetsForPresentation(using auth: AuthStore) async {
+        guard prepareCache(for: auth), !isLoadingTargets else { return }
+        await CachedPageLoader.load(
+            hasPresentedContent: hasLoadedTargets,
+            cache: {
+                await loadShareTargets(
+                    using: auth,
+                    strategy: .cacheOnly,
+                    reportError: false
+                )
+            },
+            network: { await loadShareTargets(using: auth) }
+        )
     }
 
     func create(_ input: LLMModelInput, using auth: AuthStore) async throws {
         do {
             let created = try await auth.createLLMModel(input: input)
             upsert(created)
-            errorMessage = nil
+            await refreshModels(using: auth)
         } catch {
             errorMessage = error.localizedDescription
             throw error
@@ -94,7 +133,7 @@ final class LLMSettingsStore {
         defer { mutatingModelIDs.remove(model.id) }
         do {
             upsert(try await auth.updateLLMModel(id: model.id, input: input))
-            errorMessage = nil
+            await refreshModels(using: auth)
         } catch {
             errorMessage = error.localizedDescription
             throw error
@@ -125,7 +164,7 @@ final class LLMSettingsStore {
             for index in models.indices {
                 models[index].isDefault = models[index].id == model.id
             }
-            errorMessage = nil
+            await refreshModels(using: auth)
         } catch {
             errorMessage = error.localizedDescription
         }

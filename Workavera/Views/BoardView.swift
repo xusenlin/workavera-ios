@@ -5,13 +5,12 @@ import SwiftUI
 struct BoardView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(BoardStore.self) private var board
-    @State private var selectedProjectID: String?
     @State private var selectedStateID: String?
     @State private var selectedTask: BoardTask?
     @State private var showProjectSwitcher = false
 
     private var selectedProject: BoardProject? {
-        board.projects.first { $0.id == selectedProjectID } ?? board.projects.first
+        board.projects.first { $0.id == board.selectedProjectID } ?? board.projects.first
     }
 
     private var selectedState: BoardState? {
@@ -20,34 +19,20 @@ struct BoardView: View {
     }
 
     var body: some View {
-        Group {
-            if !board.hasLoaded && board.isLoading {
-                ProgressView("Loading board…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if board.projects.isEmpty {
-                ContentUnavailableView {
-                    Label("No Projects", systemImage: "rectangle.split.3x1")
-                } description: {
-                    Text(board.errorMessage ?? "Create or join a project in Workavera to see it here.")
-                } actions: {
-                    Button("Refresh") {
-                        Task { await board.refresh(using: auth) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            } else {
-                boardContent
-            }
+        CachedContentView(
+            isLoading: board.isLoading,
+            hasLoaded: board.hasLoaded,
+            loadingTitle: "Loading board…"
+        ) {
+            boardContent
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Board")
         .task(id: auth.user?.id) {
-            await board.loadIfNeeded(using: auth)
+            await board.loadForPresentation(using: auth)
         }
-        .alert("Could Not Update Board", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { board.clearError() }
-        } message: {
-            Text(board.errorMessage ?? "Unknown error")
+        .task(id: auth.user?.id) {
+            await board.listenForRealtimeUpdates(using: auth)
         }
         .sheet(isPresented: $showProjectSwitcher) {
             ProjectSwitcherSheet(
@@ -61,7 +46,7 @@ struct BoardView: View {
                 }
             ) { project in
                 withAnimation(.easeInOut(duration: 0.15)) {
-                    selectedProjectID = project.id
+                    board.selectProject(project)
                     selectedStateID = nil
                 }
             }
@@ -88,7 +73,27 @@ struct BoardView: View {
     private var boardContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let project = selectedProject {
+                if let error = board.errorMessage {
+                    InlineErrorBanner(message: error) {
+                        Task { await board.refresh(using: auth) }
+                    }
+                    .padding(.horizontal, 20)
+                }
+
+                if board.projects.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Projects", systemImage: "rectangle.split.3x1")
+                    } description: {
+                        Text("Create or join a project in Workavera to see it here.")
+                    } actions: {
+                        Button("Refresh") {
+                            Task { await board.refresh(using: auth) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 36)
+                } else if let project = selectedProject {
                     projectHeader(project)
                     statePicker(project)
                     taskList
@@ -125,35 +130,16 @@ struct BoardView: View {
             HStack(spacing: 8) {
                 ForEach(project.states) { state in
                     let isSelected = state.id == selectedState?.id
-                    Button {
+                    WorkspaceFilterChip(
+                        title: state.name,
+                        isSelected: isSelected,
+                        dotColor: Color(hex: state.color),
+                        count: state.tasks.count
+                    ) {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             selectedStateID = state.id
                         }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(Color(hex: state.color))
-                                .frame(width: 7, height: 7)
-                            Text(state.name)
-                            Text("\(state.tasks.count)")
-                                .foregroundStyle(isSelected ? .primary : .tertiary)
-                        }
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(isSelected ? .primary : .secondary)
-                        .padding(.horizontal, 12)
-                        .frame(height: 34)
-                        .background(
-                            Color(.secondarySystemGroupedBackground),
-                            in: Capsule()
-                        )
-                        .overlay {
-                            if isSelected {
-                                Capsule()
-                                    .strokeBorder(Color.accentColor, lineWidth: 2)
-                            }
-                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 20)
@@ -194,12 +180,6 @@ struct BoardView: View {
         }
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { board.errorMessage != nil && !board.projects.isEmpty },
-            set: { if !$0 { board.clearError() } }
-        )
-    }
 }
 
 // MARK: - 项目切换（卡片列表 sheet）

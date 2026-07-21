@@ -34,7 +34,23 @@ final class NotificationStore {
         isRealtimeConnected = false
     }
 
-    func refresh(using auth: AuthStore, page requestedPage: Int? = nil) async {
+    func loadAutomatically(using auth: AuthStore) async {
+        guard !isLoading else { return }
+        await CachedPageLoader.load(
+            hasPresentedContent: hasLoaded,
+            cache: {
+                await refresh(using: auth, strategy: .cacheOnly, reportError: false)
+            },
+            network: { await refresh(using: auth) }
+        )
+    }
+
+    func refresh(
+        using auth: AuthStore,
+        page requestedPage: Int? = nil,
+        strategy: DataLoadStrategy = .networkOnly,
+        reportError: Bool = true
+    ) async {
         let targetPage = max(0, requestedPage ?? page)
         refreshSequence += 1
         let sequence = refreshSequence
@@ -46,8 +62,12 @@ final class NotificationStore {
         }
 
         do {
-            async let pageRequest = auth.loadNotifications(page: targetPage + 1, pageSize: pageSize)
-            async let countRequest = auth.loadUnreadNotificationCount()
+            async let pageRequest = auth.loadNotifications(
+                page: targetPage + 1,
+                pageSize: pageSize,
+                strategy: strategy
+            )
+            async let countRequest = auth.loadUnreadNotificationCount(strategy: strategy)
             let (loadedPage, loadedCount) = try await (pageRequest, countRequest)
             guard sequence == refreshSequence else { return }
 
@@ -62,8 +82,10 @@ final class NotificationStore {
             return
         } catch {
             guard sequence == refreshSequence else { return }
-            hasLoaded = true
-            errorMessage = error.localizedDescription
+            if reportError {
+                hasLoaded = true
+                errorMessage = error.localizedDescription
+            }
         }
 
     }

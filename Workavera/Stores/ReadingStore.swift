@@ -39,12 +39,23 @@ final class ReadingStore {
         cachedUserID = nil
     }
 
-    func loadIfNeeded(using auth: AuthStore) async {
-        guard prepareCache(for: auth), !hasLoaded, !isLoading else { return }
-        await refresh(using: auth)
+    func loadForPresentation(using auth: AuthStore) async {
+        guard prepareCache(for: auth), !isLoading else { return }
+        await CachedPageLoader.load(
+            hasPresentedContent: hasLoaded,
+            cache: {
+                await refresh(using: auth, strategy: .cacheOnly, reportError: false)
+            },
+            network: { await refresh(using: auth) }
+        )
     }
 
-    func refresh(using auth: AuthStore, page requestedPage: Int? = nil) async {
+    func refresh(
+        using auth: AuthStore,
+        page requestedPage: Int? = nil,
+        strategy: DataLoadStrategy = .networkOnly,
+        reportError: Bool = true
+    ) async {
         guard prepareCache(for: auth) else { return }
         let targetPage = min(max(0, requestedPage ?? page), totalPages - 1)
         loadSequence += 1
@@ -59,7 +70,8 @@ final class ReadingStore {
                 filter: filter,
                 page: targetPage + 1,
                 pageSize: Self.pageSize,
-                query: query
+                query: query,
+                strategy: strategy
             )
             guard sequence == loadSequence else { return }
             items = result.items
@@ -73,8 +85,10 @@ final class ReadingStore {
             return
         } catch {
             guard sequence == loadSequence else { return }
-            hasLoaded = true
-            errorMessage = error.localizedDescription
+            if reportError {
+                hasLoaded = true
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -183,7 +197,7 @@ final class ReadingStore {
             if let index = items.firstIndex(where: { $0.id == item.id }) {
                 items[index] = updated
             }
-            errorMessage = nil
+            await refresh(using: auth)
             return updated
         } catch {
             errorMessage = error.localizedDescription

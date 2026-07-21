@@ -85,13 +85,68 @@ final class AuthStoreTests: XCTestCase {
         XCTAssertEqual(preferenceAttempts, 2)
     }
 
+    func testCachedPreferencesSkipAutomaticRefreshOnSessionRestore() async throws {
+        let authBody = Data(#"{"token":"fresh-token","record":{"id":"user-1","collectionId":"_pb_users_auth_","email":"person@example.com","name":"Person","avatar":"","status":"online"}}"#.utf8)
+        var preferenceRequests = 0
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/api/collections/users/auth-with-password":
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    authBody
+                )
+            case "/api/collections/user_preferences/records":
+                let body = Data(#"{"items":[{"id":"pref-1","owner":"user-1","theme":"dark","memory_enabled":true,"memory_auto_capture":true}]}"#.utf8)
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    body
+                )
+            default:
+                throw URLError(.badURL)
+            }
+        }
+        let onlineStore = makeStore()
+        try await onlineStore.login(email: "person@example.com", password: "secret")
+        XCTAssertEqual(onlineStore.appearance, .dark)
+        XCTAssertTrue(onlineStore.memoryEnabled)
+
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/api/collections/users/auth-refresh":
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    authBody
+                )
+            case "/api/collections/user_preferences/records":
+                preferenceRequests += 1
+                throw URLError(.notConnectedToInternet)
+            default:
+                throw URLError(.badURL)
+            }
+        }
+        let offlineStore = makeStore()
+
+        await offlineStore.restoreSession()
+
+        XCTAssertEqual(offlineStore.phase, .loggedIn)
+        XCTAssertEqual(offlineStore.appearance, .dark)
+        XCTAssertTrue(offlineStore.memoryEnabled)
+        XCTAssertTrue(offlineStore.memoryAutoCapture)
+        XCTAssertNil(offlineStore.preferencesMessage)
+        XCTAssertEqual(preferenceRequests, 0)
+    }
+
     private func makeStore() -> AuthStore {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         return AuthStore(
             defaults: defaults,
             tokenStore: tokenStore,
-            session: URLSession(configuration: configuration)
+            session: URLSession(configuration: configuration),
+            responseCache: APIResponseCache(
+                directory: FileManager.default.temporaryDirectory
+                    .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+            )
         )
     }
 }

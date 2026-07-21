@@ -39,22 +39,25 @@ struct CalendarView: View {
     }
 
     var body: some View {
-        Group {
-            if store.isLoading && !store.hasLoaded {
-                ProgressView("Loading calendar…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(spacing: 20) {
-                        if let error = store.errorMessage {
-                            errorBanner(error)
+        CachedContentView(
+            isLoading: store.isLoading,
+            hasLoaded: store.hasLoaded,
+            loadingTitle: "Loading calendar…"
+        ) {
+            ScrollView {
+                VStack(spacing: 20) {
+                    if let error = store.errorMessage {
+                        InlineErrorBanner(message: error) {
+                            Task { await store.refresh(using: auth) }
                         }
-                        monthCard
-                        agendaSection
                     }
-                    .padding(20)
+                    monthCard
+                    agendaSection
                 }
-                .refreshable { await store.refresh(using: auth) }
+                .padding(20)
+            }
+            .refreshable {
+                await store.refresh(using: auth)
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -70,7 +73,9 @@ struct CalendarView: View {
             }
         }
         .task(id: auth.user?.id) {
-            await store.loadIfNeeded(using: auth)
+            await store.loadForPresentation(using: auth)
+        }
+        .task(id: auth.user?.id) {
             await store.listenForRealtimeUpdates(using: auth)
         }
         .sheet(item: $selectedItem) { item in
@@ -436,20 +441,6 @@ struct CalendarView: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(priority.calendarColor.opacity(0.15), in: Capsule())
-    }
-
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle")
-            Text(message)
-                .font(.footnote)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Dismiss") { store.clearError() }
-                .font(.footnote.weight(.medium))
-        }
-        .foregroundStyle(.red)
-        .padding(12)
-        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var deletePresented: Binding<Bool> {

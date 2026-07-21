@@ -7,21 +7,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            if let preferencesMessage = auth.preferencesMessage {
-                Section {
-                    HStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle")
-                        Text(preferencesMessage)
-                            .font(.footnote)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Button("Retry") {
-                            Task { await auth.reloadPreferences() }
-                        }
-                        .font(.footnote.weight(.medium))
+            if let warningMessage {
+                InlineErrorListSection(
+                    message: warningMessage,
+                    actionTitle: errorMessage == nil ? "Retry" : "Dismiss"
+                ) {
+                    if errorMessage != nil {
+                        errorMessage = nil
+                    } else {
+                        Task { await auth.reloadPreferences() }
                     }
-                    .foregroundStyle(.red)
                 }
-                .listRowBackground(Color.red.opacity(0.08))
             }
 
             Section("Server") {
@@ -133,11 +129,6 @@ struct SettingsView: View {
         .task {
             await auth.reloadPreferences()
         }
-        .alert("Could Not Save Settings", isPresented: errorPresented) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "Unknown error")
-        }
         .alert(
             "Sign out of Workavera?",
             isPresented: $confirmSignOut
@@ -202,10 +193,7 @@ struct SettingsView: View {
         )
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )
+    private var warningMessage: String? {
+        errorMessage ?? auth.preferencesMessage
     }
 }

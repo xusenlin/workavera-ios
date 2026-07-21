@@ -20,34 +20,18 @@ struct ModelSharingView: View {
     }
 
     var body: some View {
-        Group {
-            if store.isLoadingModels && !store.hasLoadedModels {
-                ProgressView("Loading sharing options…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if store.shareableModels.isEmpty {
-                ContentUnavailableView {
-                    Label("No Models to Share", systemImage: "square.and.arrow.up")
-                } description: {
-                    Text(
-                        store.models.isEmpty
-                            ? "Create a model configuration before sharing it."
-                            : "Configurations received from another user cannot be shared onward."
-                    )
-                }
-            } else {
-                sharingForm
-            }
+        CachedContentView(
+            isLoading: store.isLoadingModels,
+            hasLoaded: store.hasLoadedModels,
+            loadingTitle: "Loading sharing options…"
+        ) {
+            sharingForm
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Model Sharing")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, prompt: "Search users")
-        .task { await load() }
-        .alert("Could Not Share Model", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { store.clearError() }
-        } message: {
-            Text(store.errorMessage ?? "Unknown error")
-        }
+        .task(id: auth.user?.id) { await load(refresh: false) }
         .alert("Invitation Sent", isPresented: successPresented) {
             Button("OK", role: .cancel) { successMessage = nil }
         } message: {
@@ -57,6 +41,27 @@ struct ModelSharingView: View {
 
     private var sharingForm: some View {
         Form {
+            if let errorMessage = store.errorMessage {
+                InlineErrorListSection(message: errorMessage) {
+                        Task { await load(refresh: true) }
+                }
+            }
+
+            if store.shareableModels.isEmpty {
+                Section {
+                    ContentUnavailableView {
+                        Label("No Models to Share", systemImage: "square.and.arrow.up")
+                    } description: {
+                        Text(
+                            store.models.isEmpty
+                                ? "Create a model configuration before sharing it."
+                                : "Configurations received from another user cannot be shared onward."
+                        )
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                }
+            } else {
             Section {
                 Label(
                     "Recipients get a notification and may accept or reject it. Accepting creates an independent copy; the API key is never displayed.",
@@ -147,20 +152,14 @@ struct ModelSharingView: View {
                 }
                 .disabled(selectedModel == nil || selectedUserIDs.isEmpty || store.isSharing)
             }
+            }
         }
-        .refreshable { await load() }
+        .refreshable { await load(refresh: true) }
     }
 
     private var shareButtonTitle: String {
         if store.isSharing { return "Sending Invitations…" }
         return "Share with \(selectedUserIDs.count) User\(selectedUserIDs.count == 1 ? "" : "s")"
-    }
-
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { store.errorMessage != nil },
-            set: { if !$0 { store.clearError() } }
-        )
     }
 
     private var successPresented: Binding<Bool> {
@@ -170,9 +169,14 @@ struct ModelSharingView: View {
         )
     }
 
-    private func load() async {
-        await store.refreshModels(using: auth)
-        await store.loadShareTargets(using: auth)
+    private func load(refresh: Bool) async {
+        if refresh {
+            await store.refreshModels(using: auth)
+            await store.loadShareTargets(using: auth)
+        } else {
+            await store.loadModelsForPresentation(using: auth)
+            await store.loadShareTargetsForPresentation(using: auth)
+        }
         if selectedModel == nil {
             selectedModelID = store.shareableModels.first?.id
         }

@@ -31,12 +31,20 @@ final class CalendarStore {
         isListening = false
     }
 
-    func loadIfNeeded(using auth: AuthStore) async {
-        guard prepareCache(for: auth), !hasLoaded, !isLoading else { return }
-        await refresh(using: auth)
+    func loadForPresentation(using auth: AuthStore) async {
+        guard prepareCache(for: auth), !isLoading else { return }
+        await CachedPageLoader.load(
+            hasPresentedContent: hasLoaded,
+            cache: { await refresh(using: auth, strategy: .cacheOnly, reportError: false) },
+            network: { await refresh(using: auth) }
+        )
     }
 
-    func refresh(using auth: AuthStore) async {
+    func refresh(
+        using auth: AuthStore,
+        strategy: DataLoadStrategy = .networkOnly,
+        reportError: Bool = true
+    ) async {
         guard prepareCache(for: auth) else { return }
         loadSequence += 1
         let sequence = loadSequence
@@ -46,7 +54,7 @@ final class CalendarStore {
         }
 
         do {
-            let snapshot = try await auth.loadCalendarSnapshot()
+            let snapshot = try await auth.loadCalendarSnapshot(strategy: strategy)
             guard sequence == loadSequence else { return }
             events = snapshot.events.sorted { $0.startAt < $1.startAt }
             tasks = snapshot.tasks.sorted { $0.dueDate < $1.dueDate }
@@ -57,8 +65,10 @@ final class CalendarStore {
             return
         } catch {
             guard sequence == loadSequence else { return }
-            hasLoaded = true
-            errorMessage = error.localizedDescription
+            if reportError {
+                hasLoaded = true
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -66,7 +76,7 @@ final class CalendarStore {
         do {
             let event = try await auth.createCalendarEvent(input: input)
             apply(event)
-            errorMessage = nil
+            await refresh(using: auth)
             return event
         } catch {
             errorMessage = error.localizedDescription
@@ -85,7 +95,7 @@ final class CalendarStore {
         do {
             let updated = try await auth.updateCalendarEvent(id: event.id, input: input)
             apply(updated)
-            errorMessage = nil
+            await refresh(using: auth)
             return updated
         } catch {
             errorMessage = error.localizedDescription
@@ -100,7 +110,7 @@ final class CalendarStore {
         do {
             try await auth.deleteCalendarEvent(id: event.id)
             events.removeAll { $0.id == event.id }
-            errorMessage = nil
+            await refresh(using: auth)
             return true
         } catch {
             errorMessage = error.localizedDescription

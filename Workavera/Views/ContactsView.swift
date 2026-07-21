@@ -25,15 +25,18 @@ struct ContactsView: View {
     private var everyone: [Contact] { filtered.filter { !$0.isFavorite } }
 
     var body: some View {
-        Group {
-            if store.isLoading && !store.hasLoaded {
-                ProgressView("Loading contacts…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
+        CachedContentView(
+            isLoading: store.isLoading,
+            hasLoaded: store.hasLoaded,
+            loadingTitle: "Loading contacts…"
+        ) {
+            ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         if let error = store.errorMessage {
-                            errorBanner(error)
+                            InlineErrorBanner(message: error) {
+                                Task { await store.refresh(using: auth) }
+                            }
+                            .padding(.horizontal, 20)
                         }
                         searchField
                         statusFilterPicker
@@ -51,13 +54,12 @@ struct ContactsView: View {
                     }
                     .padding(.vertical, 20)
                 }
-                .refreshable { await store.refresh(using: auth) }
-            }
+            .refreshable { await store.refresh(using: auth) }
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Contacts")
         .task(id: auth.user?.id) {
-            await store.loadIfNeeded(using: auth)
+            await store.loadForPresentation(using: auth)
         }
         .sheet(item: $selection) { selection in
             ContactDetailSheet(contactID: selection.id)
@@ -105,23 +107,13 @@ struct ContactsView: View {
 
     private func statusChip(_ value: UserStatus?, title: String) -> some View {
         let isSelected = statusFilter == value
-        return Button {
+        return WorkspaceFilterChip(
+            title: title,
+            isSelected: isSelected,
+            dotColor: value?.color
+        ) {
             withAnimation(.easeInOut(duration: 0.15)) { statusFilter = value }
-        } label: {
-            HStack(spacing: 6) {
-                if let value { StatusDot(status: value) }
-                Text(title)
-            }
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Color(.secondarySystemGroupedBackground), in: Capsule())
-            .overlay(
-                Capsule().strokeBorder(Color.accentColor, lineWidth: isSelected ? 1.5 : 0)
-            )
         }
-        .buttonStyle(.plain)
     }
 
     private var emptyState: some View {
@@ -211,20 +203,6 @@ struct ContactsView: View {
         .buttonStyle(.plain)
     }
 
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle")
-            Text(message)
-                .font(.footnote)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Retry") { Task { await store.refresh(using: auth) } }
-                .font(.footnote.weight(.medium))
-        }
-        .foregroundStyle(.red)
-        .padding(12)
-        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal, 20)
-    }
 }
 
 private struct ContactSelection: Identifiable {

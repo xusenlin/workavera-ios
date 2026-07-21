@@ -43,12 +43,23 @@ final class DocsStore {
         cachedUserID = nil
     }
 
-    func loadIfNeeded(using auth: AuthStore) async {
-        guard prepareCache(for: auth), !hasLoaded, !isLoading else { return }
-        await refresh(using: auth)
+    func loadForPresentation(using auth: AuthStore) async {
+        guard prepareCache(for: auth), !isLoading else { return }
+        await CachedPageLoader.load(
+            hasPresentedContent: hasLoaded,
+            cache: {
+                await refresh(using: auth, strategy: .cacheOnly, reportError: false)
+            },
+            network: { await refresh(using: auth) }
+        )
     }
 
-    func refresh(using auth: AuthStore, page requestedPage: Int? = nil) async {
+    func refresh(
+        using auth: AuthStore,
+        page requestedPage: Int? = nil,
+        strategy: DataLoadStrategy = .networkOnly,
+        reportError: Bool = true
+    ) async {
         guard prepareCache(for: auth) else { return }
         let targetPage = view.usesPagination ? max(0, requestedPage ?? page) : 0
         loadSequence += 1
@@ -63,7 +74,8 @@ final class DocsStore {
                 view: view,
                 page: targetPage + 1,
                 pageSize: Self.pageSize,
-                query: query
+                query: query,
+                strategy: strategy
             )
             guard sequence == loadSequence else { return }
             documents = snapshot.documents
@@ -85,17 +97,24 @@ final class DocsStore {
             return
         } catch {
             guard sequence == loadSequence else { return }
-            hasLoaded = true
-            errorMessage = error.localizedDescription
+            if reportError {
+                hasLoaded = true
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
     func selectView(_ newView: DocsViewFilter, using auth: AuthStore) async {
         guard view != newView else { return }
+        let previousView = view
+        let previousPage = page
         view = newView
         page = 0
-        documents = []
         await refresh(using: auth, page: 0)
+        if errorMessage != nil {
+            view = previousView
+            page = previousPage
+        }
     }
 
     func reloadSearch(using auth: AuthStore) async {
@@ -112,20 +131,20 @@ final class DocsStore {
     }
 
     func loadDocument(id: String, using auth: AuthStore, force: Bool = false) async {
-        guard force || documentCache[id] == nil else { return }
         guard !loadingDocumentIDs.contains(id) else { return }
         loadingDocumentIDs.insert(id)
         defer { loadingDocumentIDs.remove(id) }
 
-        do {
-            let pinned = documents.first(where: { $0.id == id })?.pinned
-                ?? documentCache[id]?.pinned
-                ?? false
-            documentCache[id] = try await auth.loadDocument(id: id, pinned: pinned)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+        if !force, documentCache[id] == nil {
+            await fetchDocument(
+                id: id,
+                using: auth,
+                strategy: .cacheOnly,
+                reportError: false
+            )
         }
+        guard !Task.isCancelled else { return }
+        await fetchDocument(id: id, using: auth, strategy: .networkOnly, reportError: true)
     }
 
     func togglePin(id: String, using auth: AuthStore) async {
@@ -182,6 +201,31 @@ final class DocsStore {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    private func fetchDocument(
+        id: String,
+        using auth: AuthStore,
+        strategy: DataLoadStrategy,
+        reportError: Bool
+    ) async {
+        do {
+            let pinned = documents.first(where: { $0.id == id })?.pinned
+                ?? documentCache[id]?.pinned
+                ?? false
+            documentCache[id] = try await auth.loadDocument(
+                id: id,
+                pinned: pinned,
+                strategy: strategy
+            )
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            if reportError {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func setPinned(id: String, pinned: Bool) {

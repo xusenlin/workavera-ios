@@ -50,6 +50,7 @@ private struct RealtimeConnection: Decodable {
 }
 
 enum APIError: LocalizedError {
+    case cacheMiss
     case invalidResponse
     case transport(URLError)
     case http(statusCode: Int, message: String, fieldMessages: [String: String])
@@ -57,6 +58,8 @@ enum APIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .cacheMiss:
+            "No cached response is available."
         case .invalidResponse:
             "The server returned an invalid response."
         case .transport(let error):
@@ -81,17 +84,26 @@ enum APIError: LocalizedError {
 struct PocketBaseClient {
     let configuration: ServerConfiguration
     private let session: URLSession
+    private let responseCache: APIResponseCache
+    private let cacheNamespace: String?
+    private let loadStrategy: DataLoadStrategy
 
     init(
         baseURLString: String,
         allowInsecureHTTP: Bool,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        responseCache: APIResponseCache = .shared,
+        cacheNamespace: String? = nil,
+        loadStrategy: DataLoadStrategy = .networkOnly
     ) throws {
         configuration = try ServerConfiguration(
             address: baseURLString,
             allowInsecureHTTP: allowInsecureHTTP
         )
         self.session = session
+        self.responseCache = responseCache
+        self.cacheNamespace = cacheNamespace
+        self.loadStrategy = loadStrategy
     }
 
     func authWithPassword(identity: String, password: String) async throws -> AuthResponse {
@@ -542,6 +554,52 @@ struct PocketBaseClient {
         )
     }
 
+    func boardRealtimeSignals(
+        token: String
+    ) -> AsyncThrowingStream<CalendarRealtimeSignal, Error> {
+        realtimeEvents(
+            topics: [
+                "board_projects/*",
+                "board_project_preferences/*",
+                "board_project_states/*",
+                "board_tasks/*",
+                "board_project_labels/*",
+                "board_project_members/*"
+            ],
+            eventPrefixes: [
+                "board_projects",
+                "board_project_preferences",
+                "board_project_states",
+                "board_tasks",
+                "board_project_labels",
+                "board_project_members"
+            ],
+            token: token,
+            connectionError: "Could not connect to realtime board updates."
+        )
+    }
+
+    func dashboardRealtimeSignals(
+        token: String
+    ) -> AsyncThrowingStream<CalendarRealtimeSignal, Error> {
+        realtimeEvents(
+            topics: [
+                "board_projects/*",
+                "board_tasks/*",
+                "calendar_events/*",
+                "reading_items/*"
+            ],
+            eventPrefixes: [
+                "board_projects",
+                "board_tasks",
+                "calendar_events",
+                "reading_items"
+            ],
+            token: token,
+            connectionError: "Could not connect to realtime dashboard updates."
+        )
+    }
+
     func getDashboardSummary(now: Date = .now, token: String) async throws -> DashboardSummary {
         let nextWeek = Calendar(identifier: .gregorian).date(
             byAdding: .day,
@@ -556,13 +614,15 @@ struct PocketBaseClient {
             path: "/api/collections/board_projects/records",
             method: "GET",
             queryItems: Self.countQuery(filter: "archived = false"),
-            token: token
+            token: token,
+            cacheKey: "dashboard.active-projects"
         )
         async let tasks: RecordListResponse<RecordIDOnly> = send(
             path: "/api/collections/board_tasks/records",
             method: "GET",
             queryItems: Self.countQuery(filter: openTaskFilter),
-            token: token
+            token: token,
+            cacheKey: "dashboard.open-tasks"
         )
         async let events: RecordListResponse<RecordIDOnly> = send(
             path: "/api/collections/calendar_events/records",
@@ -570,7 +630,8 @@ struct PocketBaseClient {
             queryItems: Self.countQuery(
                 filter: "start_at >= \"\(nowValue)\" && start_at < \"\(nextWeekValue)\""
             ),
-            token: token
+            token: token,
+            cacheKey: "dashboard.next-seven-days-events"
         )
         async let upcomingTasks: RecordListResponse<RecordIDOnly> = send(
             path: "/api/collections/board_tasks/records",
@@ -578,13 +639,15 @@ struct PocketBaseClient {
             queryItems: Self.countQuery(
                 filter: "\(openTaskFilter) && due_date >= \"\(nowValue)\" && due_date < \"\(nextWeekValue)\""
             ),
-            token: token
+            token: token,
+            cacheKey: "dashboard.next-seven-days-tasks"
         )
         async let reading: RecordListResponse<RecordIDOnly> = send(
             path: "/api/collections/reading_items/records",
             method: "GET",
             queryItems: Self.countQuery(filter: "status = \"unread\""),
-            token: token
+            token: token,
+            cacheKey: "dashboard.unread-reading"
         )
 
         let (projectResult, taskResult, eventResult, upcomingTaskResult, readingResult) = try await (
@@ -1514,7 +1577,8 @@ struct PocketBaseClient {
         queryItems: [URLQueryItem] = [],
         body: Data? = nil,
         contentType: String? = nil,
-        token: String? = nil
+        token: String? = nil,
+        cacheKey: String? = nil
     ) async throws -> T {
         let data = try await perform(
             path: path,
@@ -1522,11 +1586,22 @@ struct PocketBaseClient {
             queryItems: queryItems,
             body: body,
             contentType: contentType,
-            token: token
+            token: token,
+            cacheKey: cacheKey
         )
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
+            if loadStrategy != .networkOnly,
+               let responseCacheKey = responseCacheKey(
+                   path: path,
+                   method: method,
+                   queryItems: queryItems,
+                   override: cacheKey
+               ) {
+                responseCache.removeValue(for: responseCacheKey)
+                throw APIError.cacheMiss
+            }
             throw APIError.decoding(error.localizedDescription)
         }
     }
@@ -1545,7 +1620,8 @@ struct PocketBaseClient {
         queryItems: [URLQueryItem] = [],
         body: Data? = nil,
         contentType: String? = nil,
-        token: String? = nil
+        token: String? = nil,
+        cacheKey: String? = nil
     ) async throws -> Data {
         var components = URLComponents(
             url: configuration.baseURL.appending(path: path),
@@ -1553,6 +1629,20 @@ struct PocketBaseClient {
         )
         components?.queryItems = queryItems.isEmpty ? nil : queryItems
         guard let url = components?.url else { throw APIError.invalidResponse }
+
+        let responseCacheKey = responseCacheKey(
+            path: path,
+            method: method,
+            queryItems: queryItems,
+            override: cacheKey
+        )
+        if loadStrategy == .cacheOnly {
+            guard let responseCacheKey,
+                  let cached = responseCache.data(for: responseCacheKey) else {
+                throw APIError.cacheMiss
+            }
+            return cached
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -1572,6 +1662,10 @@ struct PocketBaseClient {
             (data, response) = try await session.data(for: request)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            // URLSession commonly reports Swift task cancellation as URLError.cancelled.
+            // Keep it out of user-facing connectivity banners.
+            throw CancellationError()
         } catch let error as URLError {
             throw APIError.transport(error)
         } catch {
@@ -1589,7 +1683,29 @@ struct PocketBaseClient {
                 fieldMessages: details.fieldMessages
             )
         }
+        if let responseCacheKey {
+            responseCache.store(data, for: responseCacheKey)
+        }
         return data
+    }
+
+    private func responseCacheKey(
+        path: String,
+        method: String,
+        queryItems: [URLQueryItem],
+        override: String?
+    ) -> String? {
+        guard method == "GET", let cacheNamespace else { return nil }
+        if let override {
+            return cacheNamespace + "|" + override
+        }
+        var components = URLComponents(
+            url: configuration.baseURL.appending(path: path),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let url = components?.url else { return nil }
+        return cacheNamespace + "|" + url.absoluteString
     }
 
     private static func errorDetails(

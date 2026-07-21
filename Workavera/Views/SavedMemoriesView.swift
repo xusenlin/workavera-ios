@@ -4,18 +4,15 @@ struct SavedMemoriesView: View {
     private static let limit = 50
 
     @Environment(AuthStore.self) private var auth
-    @State private var memories: [SavedChatMemory] = []
+    @Environment(SavedMemoriesStore.self) private var store
     @State private var query = ""
     @State private var categoryFilter: MemoryCategory?
-    @State private var isLoading = true
-    @State private var mutatingIDs: Set<String> = []
     @State private var editor: MemoryEditorContext?
     @State private var deleteTarget: MemoryDeleteTarget?
-    @State private var errorMessage: String?
 
     private var visibleMemories: [SavedChatMemory] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return memories.filter { memory in
+        return store.memories.filter { memory in
             if let categoryFilter, memory.category != categoryFilter { return false }
             return normalized.isEmpty
                 || memory.content.lowercased().contains(normalized)
@@ -24,13 +21,12 @@ struct SavedMemoriesView: View {
     }
 
     var body: some View {
-        Group {
-            if isLoading && memories.isEmpty {
-                ProgressView("Loading memories…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                memoryList
-            }
+        CachedContentView(
+            isLoading: store.isLoading,
+            hasLoaded: store.hasLoaded,
+            loadingTitle: "Loading memories…"
+        ) {
+            memoryList
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Saved Memories")
@@ -58,14 +54,15 @@ struct SavedMemoriesView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .disabled(memories.count >= Self.limit)
+                .disabled(store.memories.count >= Self.limit)
                 .accessibilityLabel("Add memory")
             }
         }
-        .task { await loadMemories() }
+        .task { await store.loadForPresentation(using: auth) }
         .sheet(item: $editor) { context in
             MemoryEditorSheet(memory: context.memory) { saved in
-                apply(saved)
+                store.upsert(saved)
+                Task { await store.refresh(using: auth) }
             }
         }
         .alert(
@@ -81,15 +78,16 @@ struct SavedMemoriesView: View {
         } message: {
             Text(deleteMessage)
         }
-        .alert("Could Not Update Memories", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "Unknown error")
-        }
     }
 
     private var memoryList: some View {
         List {
+            if let errorMessage = store.errorMessage {
+                InlineErrorListSection(message: errorMessage) {
+                    Task { await store.refresh(using: auth) }
+                }
+            }
+
             if !auth.memoryEnabled {
                 Section {
                     Label(
@@ -104,10 +102,10 @@ struct SavedMemoriesView: View {
             Section {
                 if visibleMemories.isEmpty {
                     ContentUnavailableView(
-                        memories.isEmpty ? "No Saved Memories" : "No Memories Found",
+                            store.memories.isEmpty ? "No Saved Memories" : "No Memories Found",
                         systemImage: "brain.head.profile",
                         description: Text(
-                            memories.isEmpty
+                            store.memories.isEmpty
                                 ? "Add a memory here or ask Chat to remember something."
                                 : "Try another search or category."
                         )
@@ -118,7 +116,7 @@ struct SavedMemoriesView: View {
                     ForEach(visibleMemories) { memory in
                         SavedMemoryRow(
                             memory: memory,
-                            isMutating: mutatingIDs.contains(memory.id),
+                            isMutating: store.mutatingIDs.contains(memory.id),
                             onToggle: { active in
                                 Task { await toggle(memory, active: active) }
                             },
@@ -131,16 +129,16 @@ struct SavedMemoriesView: View {
                 HStack {
                     Text(categoryFilter?.label ?? "All Memories")
                     Spacer()
-                    Text("\(memories.count) of \(Self.limit)")
+                    Text("\(store.memories.count) of \(Self.limit)")
                 }
             } footer: {
-                if memories.count >= Self.limit {
+                if store.memories.count >= Self.limit {
                     Text("Delete an existing memory before adding another one.")
                         .foregroundStyle(.orange)
                 }
             }
 
-            if !memories.isEmpty {
+            if !store.memories.isEmpty {
                 Section {
                     Button(role: .destructive) {
                         deleteTarget = .all
@@ -150,20 +148,13 @@ struct SavedMemoriesView: View {
                 }
             }
         }
-        .refreshable { await loadMemories() }
+        .refreshable { await store.refresh(using: auth) }
     }
 
     private var deletePresented: Binding<Bool> {
         Binding(
             get: { deleteTarget != nil },
             set: { if !$0 { deleteTarget = nil } }
-        )
-    }
-
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
         )
     }
 
@@ -184,70 +175,19 @@ struct SavedMemoriesView: View {
         return "This memory will be permanently removed and will no longer be available to Chat."
     }
 
-    private func loadMemories() async {
-        if memories.isEmpty { isLoading = true }
-        defer { isLoading = false }
-        do {
-            memories = try await auth.loadSavedMemories()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func apply(_ memory: SavedChatMemory) {
-        if let index = memories.firstIndex(where: { $0.id == memory.id }) {
-            memories[index] = memory
-        } else {
-            memories.append(memory)
-        }
-        memories.sort { $0.updatedAt > $1.updatedAt }
-    }
-
     private func toggle(_ memory: SavedChatMemory, active: Bool) async {
-        guard !mutatingIDs.contains(memory.id) else { return }
-        mutatingIDs.insert(memory.id)
-        defer { mutatingIDs.remove(memory.id) }
-        do {
-            apply(try await auth.setSavedMemoryActive(id: memory.id, active: active))
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        await store.toggle(memory, active: active, using: auth)
     }
 
     private func delete(_ target: MemoryDeleteTarget) async {
         switch target {
         case .one(let memory):
-            mutatingIDs.insert(memory.id)
-            defer { mutatingIDs.remove(memory.id) }
-            do {
-                try await auth.deleteSavedMemory(id: memory.id)
-                memories.removeAll { $0.id == memory.id }
-                deleteTarget = nil
-                errorMessage = nil
-            } catch {
-                errorMessage = error.localizedDescription
-            }
+            _ = await store.delete(memory, using: auth)
+            deleteTarget = nil
 
         case .all:
-            let ids = memories.map(\.id)
-            var failed = 0
-            for id in ids {
-                do {
-                    try await auth.deleteSavedMemory(id: id)
-                    memories.removeAll { $0.id == id }
-                } catch {
-                    failed += 1
-                }
-            }
+            _ = await store.deleteAll(using: auth)
             deleteTarget = nil
-            if failed > 0 {
-                await loadMemories()
-                errorMessage = "Deleted \(ids.count - failed) memories, but \(failed) could not be removed."
-            } else {
-                errorMessage = nil
-            }
         }
     }
 }

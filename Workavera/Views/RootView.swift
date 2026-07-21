@@ -23,7 +23,7 @@ struct RootView: View {
         }
         .task(id: auth.user?.id) {
             notifications.reset()
-            await notifications.refresh(using: auth)
+            await notifications.loadAutomatically(using: auth)
             await notifications.listenForRealtimeEvents(using: auth)
         }
     }

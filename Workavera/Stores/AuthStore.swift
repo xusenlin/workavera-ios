@@ -37,6 +37,7 @@ final class AuthStore {
     private let defaults: UserDefaults
     private let tokenStore: any TokenStoring
     private let session: URLSession
+    private let responseCache: APIResponseCache
     private var latestStatusRequestID: UUID?
     private var latestPreferencesRequestID: UUID?
 
@@ -45,15 +46,18 @@ final class AuthStore {
     private static let lastEmailKey = "workavera.lastLoginEmail"
     private static let legacyTokenAccount = "workavera.authToken"
     private static let tokenAccountPrefix = "workavera.authToken.server:"
+    private static let preferencesCachePrefix = "workavera.preferences.cache:"
 
     init(
         defaults: UserDefaults = .standard,
         tokenStore: any TokenStoring = KeychainTokenStore(),
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        responseCache: APIResponseCache = .shared
     ) {
         self.defaults = defaults
         self.tokenStore = tokenStore
         self.session = session
+        self.responseCache = responseCache
         serverAddress = defaults.string(forKey: Self.serverKey) ?? "http://127.0.0.1:8090"
         allowInsecureHTTP = defaults.bool(forKey: Self.insecureHTTPKey)
         lastLoginEmail = defaults.string(forKey: Self.lastEmailKey) ?? ""
@@ -116,7 +120,7 @@ final class AuthStore {
         do {
             let auth = try await makeClient().authRefresh(token: savedToken)
             try apply(auth)
-            await loadPreferences()
+            if preferences == nil { await loadPreferences() }
         } catch let error as APIError where error.isAuthenticationFailure {
             try? tokenStore.delete(account: account)
             clearSession()
@@ -134,7 +138,7 @@ final class AuthStore {
         )
         try apply(auth)
         lastLoginEmail = normalizedEmail
-        await loadPreferences()
+        if preferences == nil { await loadPreferences() }
     }
 
     func logout() {
@@ -207,6 +211,7 @@ final class AuthStore {
             theme: appearance,
             token: token
         )
+        cachePreferences()
         preferencesMessage = nil
     }
 
@@ -217,6 +222,7 @@ final class AuthStore {
             memoryEnabled: enabled,
             token: token
         )
+        cachePreferences()
         preferencesMessage = nil
     }
 
@@ -227,6 +233,7 @@ final class AuthStore {
             memoryAutoCapture: enabled,
             token: token
         )
+        cachePreferences()
         preferencesMessage = nil
     }
 
@@ -234,9 +241,11 @@ final class AuthStore {
         await loadPreferences()
     }
 
-    func loadContacts() async throws -> ContactsSnapshot {
+    func loadContacts(strategy: DataLoadStrategy = .networkOnly) async throws -> ContactsSnapshot {
         guard let user, let token else { throw sessionUnavailableError }
-        return try await makeClient().getContacts(ownerID: user.id, token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getContacts(ownerID: user.id, token: token)
+        }
     }
 
     func createContactFavorite(contactID: String) async throws -> ContactFavoriteRecord {
@@ -257,16 +266,19 @@ final class AuthStore {
         filter: ReadingListFilter,
         page: Int,
         pageSize: Int,
-        query: String
+        query: String,
+        strategy: DataLoadStrategy = .networkOnly
     ) async throws -> ReadingPage {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getReadingPage(
-            filter: filter,
-            page: page,
-            pageSize: pageSize,
-            query: query,
-            token: token
-        )
+        return try await load(strategy: strategy) { client in
+            try await client.getReadingPage(
+                filter: filter,
+                page: page,
+                pageSize: pageSize,
+                query: query,
+                token: token
+            )
+        }
     }
 
     func createReadingItem(input: ReadingItemInput) async throws -> ReadingItem {
@@ -303,18 +315,22 @@ final class AuthStore {
         return try await makeClient().markAllReadingItemsRead(token: token)
     }
 
-    func loadNotifications(page: Int, pageSize: Int) async throws -> NotificationPage {
+    func loadNotifications(
+        page: Int,
+        pageSize: Int,
+        strategy: DataLoadStrategy = .networkOnly
+    ) async throws -> NotificationPage {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getNotifications(
-            page: page,
-            pageSize: pageSize,
-            token: token
-        )
+        return try await load(strategy: strategy) { client in
+            try await client.getNotifications(page: page, pageSize: pageSize, token: token)
+        }
     }
 
-    func loadUnreadNotificationCount() async throws -> Int {
+    func loadUnreadNotificationCount(strategy: DataLoadStrategy = .networkOnly) async throws -> Int {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getUnreadNotificationCount(token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getUnreadNotificationCount(token: token)
+        }
     }
 
     func markNotificationRead(id: String) async throws {
@@ -354,45 +370,63 @@ final class AuthStore {
         return try makeClient().notificationRealtimeEvents(token: token)
     }
 
-    func loadDashboardSummary() async throws -> DashboardSummary {
+    func loadDashboardSummary(strategy: DataLoadStrategy = .networkOnly) async throws -> DashboardSummary {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getDashboardSummary(token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getDashboardSummary(token: token)
+        }
     }
 
     func loadDocsPage(
         view: DocsViewFilter,
         page: Int,
         pageSize: Int,
-        query: String
+        query: String,
+        strategy: DataLoadStrategy = .networkOnly
     ) async throws -> DocsPage {
         guard let user, let token else { throw sessionUnavailableError }
-        return try await makeClient().getDocsPage(
-            userID: user.id,
-            view: view,
-            page: page,
-            pageSize: pageSize,
-            query: query,
-            token: token
-        )
+        return try await load(strategy: strategy) { client in
+            try await client.getDocsPage(
+                userID: user.id,
+                view: view,
+                page: page,
+                pageSize: pageSize,
+                query: query,
+                token: token
+            )
+        }
     }
 
-    func loadDocument(id: String, pinned: Bool) async throws -> WorkspaceDocument {
+    func loadDocument(
+        id: String,
+        pinned: Bool,
+        strategy: DataLoadStrategy = .networkOnly
+    ) async throws -> WorkspaceDocument {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getDocument(id: id, pinned: pinned, token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getDocument(id: id, pinned: pinned, token: token)
+        }
     }
 
-    func loadDocumentVersions(id: String) async throws -> [DocumentVersion] {
+    func loadDocumentVersions(
+        id: String,
+        strategy: DataLoadStrategy = .networkOnly
+    ) async throws -> [DocumentVersion] {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getDocumentVersions(id: id, token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getDocumentVersions(id: id, token: token)
+        }
     }
 
-    func loadDocumentVersion(id: String, revision: Int) async throws -> DocumentVersion {
+    func loadDocumentVersion(
+        id: String,
+        revision: Int,
+        strategy: DataLoadStrategy = .networkOnly
+    ) async throws -> DocumentVersion {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getDocumentVersion(
-            id: id,
-            revision: revision,
-            token: token
-        )
+        return try await load(strategy: strategy) { client in
+            try await client.getDocumentVersion(id: id, revision: revision, token: token)
+        }
     }
 
     func setDocumentPinned(id: String, pinned: Bool) async throws {
@@ -400,9 +434,11 @@ final class AuthStore {
         try await makeClient().setDocumentPinned(id: id, pinned: pinned, token: token)
     }
 
-    func loadAPIKeys() async throws -> [WorkaveraAPIKey] {
+    func loadAPIKeys(strategy: DataLoadStrategy = .networkOnly) async throws -> [WorkaveraAPIKey] {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getAPIKeys(token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getAPIKeys(token: token)
+        }
     }
 
     func createAPIKey(
@@ -424,9 +460,11 @@ final class AuthStore {
         try await makeClient().revokeAPIKey(id: id, token: token)
     }
 
-    func loadLLMModels() async throws -> [LLMModelConfiguration] {
+    func loadLLMModels(strategy: DataLoadStrategy = .networkOnly) async throws -> [LLMModelConfiguration] {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getLLMModels(token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getLLMModels(token: token)
+        }
     }
 
     func createLLMModel(input: LLMModelInput) async throws -> LLMModelConfiguration {
@@ -449,9 +487,11 @@ final class AuthStore {
         return try await makeClient().setDefaultLLMModel(id: id, token: token)
     }
 
-    func loadLLMShareTargets() async throws -> [LLMShareTarget] {
+    func loadLLMShareTargets(strategy: DataLoadStrategy = .networkOnly) async throws -> [LLMShareTarget] {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getLLMShareTargets(token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getLLMShareTargets(token: token)
+        }
     }
 
     func shareLLMModel(id: String, userIDs: [String]) async throws -> Int {
@@ -459,9 +499,11 @@ final class AuthStore {
         return try await makeClient().shareLLMModel(id: id, userIDs: userIDs, token: token)
     }
 
-    func loadSavedMemories() async throws -> [SavedChatMemory] {
+    func loadSavedMemories(strategy: DataLoadStrategy = .networkOnly) async throws -> [SavedChatMemory] {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getSavedMemories(token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getSavedMemories(token: token)
+        }
     }
 
     func createSavedMemory(
@@ -504,9 +546,11 @@ final class AuthStore {
         try await makeClient().deleteSavedMemory(id: id, token: token)
     }
 
-    func loadCalendarSnapshot() async throws -> CalendarSnapshot {
+    func loadCalendarSnapshot(strategy: DataLoadStrategy = .networkOnly) async throws -> CalendarSnapshot {
         guard let token else { throw sessionUnavailableError }
-        return try await makeClient().getCalendarSnapshot(token: token)
+        return try await load(strategy: strategy) { client in
+            try await client.getCalendarSnapshot(token: token)
+        }
     }
 
     func createCalendarEvent(input: CalendarEventInput) async throws -> AppEvent {
@@ -533,14 +577,30 @@ final class AuthStore {
         return try makeClient().calendarRealtimeSignals(token: token)
     }
 
-    func loadBoardPage(page: Int, pageSize: Int) async throws -> BoardPage {
+    func boardRealtimeSignals() throws -> AsyncThrowingStream<CalendarRealtimeSignal, Error> {
+        guard let token else { throw sessionUnavailableError }
+        return try makeClient().boardRealtimeSignals(token: token)
+    }
+
+    func dashboardRealtimeSignals() throws -> AsyncThrowingStream<CalendarRealtimeSignal, Error> {
+        guard let token else { throw sessionUnavailableError }
+        return try makeClient().dashboardRealtimeSignals(token: token)
+    }
+
+    func loadBoardPage(
+        page: Int,
+        pageSize: Int,
+        strategy: DataLoadStrategy = .networkOnly
+    ) async throws -> BoardPage {
         guard let user, let token else { throw sessionUnavailableError }
-        return try await makeClient().getBoardPage(
-            userID: user.id,
-            page: page,
-            pageSize: pageSize,
-            token: token
-        )
+        return try await load(strategy: strategy) { client in
+            try await client.getBoardPage(
+                userID: user.id,
+                page: page,
+                pageSize: pageSize,
+                token: token
+            )
+        }
     }
 
     func moveBoardTask(id: String, stateID: String, rank: Double) async throws {
@@ -571,11 +631,41 @@ final class AuthStore {
         )
     }
 
-    private func makeClient() throws -> PocketBaseClient {
+    private func load<Value>(
+        strategy: DataLoadStrategy,
+        operation: (PocketBaseClient) async throws -> Value
+    ) async throws -> Value {
+        switch strategy {
+        case .cacheOnly:
+            return try await operation(makeClient(loadStrategy: .cacheOnly))
+        case .networkOnly:
+            return try await loadFromNetwork(operation: operation)
+        }
+    }
+
+    private func loadFromNetwork<Value>(
+        operation: (PocketBaseClient) async throws -> Value
+    ) async throws -> Value {
+        do {
+            try Task.checkCancellation()
+            return try await operation(makeClient())
+        } catch is CancellationError {
+            // Navigation transitions can cancel the first URLSession request even
+            // while the replacement page task remains alive. Retry once only when
+            // the parent task itself is still active.
+            try Task.checkCancellation()
+            return try await operation(makeClient())
+        }
+    }
+
+    private func makeClient(loadStrategy: DataLoadStrategy = .networkOnly) throws -> PocketBaseClient {
         try PocketBaseClient(
             baseURLString: serverAddress,
             allowInsecureHTTP: allowInsecureHTTP,
-            session: session
+            session: session,
+            responseCache: responseCache,
+            cacheNamespace: user.map { serverAddress + "|" + $0.id },
+            loadStrategy: loadStrategy
         )
     }
 
@@ -600,6 +690,8 @@ final class AuthStore {
         try tokenStore.save(auth.token, account: tokenAccount)
         user = auth.record
         token = auth.token
+        preferences = nil
+        restoreCachedPreferences(userID: auth.record.id)
         recoveryMessage = nil
         phase = .loggedIn
     }
@@ -617,6 +709,7 @@ final class AuthStore {
                   self.token == token else { return }
             preferences = loaded
             fallbackAppearance = loaded.theme
+            cachePreferences()
             preferencesMessage = nil
         } catch {
             guard latestPreferencesRequestID == requestID,
@@ -638,5 +731,24 @@ final class AuthStore {
     private func failRecovery(_ error: Error) {
         recoveryMessage = error.localizedDescription
         phase = .recoveryFailed
+    }
+
+    private func cachePreferences() {
+        guard let userID = user?.id,
+              let preferences,
+              let data = try? JSONEncoder().encode(preferences) else { return }
+        defaults.set(data, forKey: preferencesCacheKey(userID: userID))
+    }
+
+    private func restoreCachedPreferences(userID: String) {
+        guard let data = defaults.data(forKey: preferencesCacheKey(userID: userID)),
+              let cached = try? JSONDecoder().decode(UserPreferences.self, from: data),
+              cached.owner == userID else { return }
+        preferences = cached
+        fallbackAppearance = cached.theme
+    }
+
+    private func preferencesCacheKey(userID: String) -> String {
+        Self.preferencesCachePrefix + serverAddress + ":" + userID
     }
 }

@@ -8,22 +8,12 @@ struct ModelConfigurationsView: View {
     @State private var deleteTarget: LLMModelConfiguration?
 
     var body: some View {
-        Group {
-            if store.isLoadingModels && !store.hasLoadedModels {
-                ProgressView("Loading model configurations…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if store.models.isEmpty {
-                ContentUnavailableView {
-                    Label("No Models Configured", systemImage: "sparkles")
-                } description: {
-                    Text("Add a model configuration to use Chat and AI features.")
-                } actions: {
-                    Button("Add Model") { editor = .new() }
-                        .buttonStyle(.borderedProminent)
-                }
-            } else {
-                modelList
-            }
+        CachedContentView(
+            isLoading: store.isLoadingModels,
+            hasLoaded: store.hasLoadedModels,
+            loadingTitle: "Loading model configurations…"
+        ) {
+            modelList
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Model Configurations")
@@ -34,7 +24,7 @@ struct ModelConfigurationsView: View {
                     .accessibilityLabel("Add model")
             }
         }
-        .task { await store.refreshModels(using: auth) }
+        .task(id: auth.user?.id) { await store.loadModelsForPresentation(using: auth) }
         .sheet(item: $editor) { context in
             ModelConfigurationEditor(context: context) { input in
                 if let model = context.model {
@@ -56,24 +46,38 @@ struct ModelConfigurationsView: View {
         } message: {
             Text(deleteMessage)
         }
-        .alert("Could Not Update Models", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { store.clearError() }
-        } message: {
-            Text(store.errorMessage ?? "Unknown error")
-        }
     }
 
     private var modelList: some View {
         List {
+            if let errorMessage = store.errorMessage {
+                InlineErrorListSection(message: errorMessage) {
+                    Task { await store.refreshModels(using: auth) }
+                }
+            }
+
             Section {
-                ForEach(store.models) { model in
-                    ModelConfigurationRow(
-                        model: model,
-                        isMutating: store.mutatingModelIDs.contains(model.id),
-                        onSetDefault: { Task { await store.setDefault(model, using: auth) } },
-                        onEdit: { editor = .edit(model) },
-                        onDelete: { deleteTarget = model }
-                    )
+                if store.models.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Models Configured", systemImage: "sparkles")
+                    } description: {
+                        Text("Add a model configuration to use Chat and AI features.")
+                    } actions: {
+                        Button("Add Model") { editor = .new() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                } else {
+                    ForEach(store.models) { model in
+                        ModelConfigurationRow(
+                            model: model,
+                            isMutating: store.mutatingModelIDs.contains(model.id),
+                            onSetDefault: { Task { await store.setDefault(model, using: auth) } },
+                            onEdit: { editor = .edit(model) },
+                            onDelete: { deleteTarget = model }
+                        )
+                    }
                 }
             } header: {
                 Text("Available to Your Account")
@@ -88,13 +92,6 @@ struct ModelConfigurationsView: View {
         Binding(
             get: { deleteTarget != nil },
             set: { if !$0 { deleteTarget = nil } }
-        )
-    }
-
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { store.errorMessage != nil },
-            set: { if !$0 { store.clearError() } }
         )
     }
 

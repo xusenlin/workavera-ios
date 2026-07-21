@@ -25,12 +25,20 @@ final class ContactsStore {
         cachedUserID = nil
     }
 
-    func loadIfNeeded(using auth: AuthStore) async {
-        guard prepareCache(for: auth), !hasLoaded, !isLoading else { return }
-        await refresh(using: auth)
+    func loadForPresentation(using auth: AuthStore) async {
+        guard prepareCache(for: auth), !isLoading else { return }
+        await CachedPageLoader.load(
+            hasPresentedContent: hasLoaded,
+            cache: { await refresh(using: auth, strategy: .cacheOnly, reportError: false) },
+            network: { await refresh(using: auth) }
+        )
     }
 
-    func refresh(using auth: AuthStore) async {
+    func refresh(
+        using auth: AuthStore,
+        strategy: DataLoadStrategy = .networkOnly,
+        reportError: Bool = true
+    ) async {
         guard prepareCache(for: auth) else { return }
         loadSequence += 1
         let sequence = loadSequence
@@ -40,7 +48,7 @@ final class ContactsStore {
         }
 
         do {
-            let snapshot = try await auth.loadContacts()
+            let snapshot = try await auth.loadContacts(strategy: strategy)
             guard sequence == loadSequence else { return }
             contacts = snapshot.contacts
             favoriteRecordIDs = snapshot.favoriteRecordIDs
@@ -50,8 +58,10 @@ final class ContactsStore {
             return
         } catch {
             guard sequence == loadSequence else { return }
-            hasLoaded = true
-            errorMessage = error.localizedDescription
+            if reportError {
+                hasLoaded = true
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -74,7 +84,7 @@ final class ContactsStore {
                 let record = try await auth.createContactFavorite(contactID: contactID)
                 favoriteRecordIDs[contactID] = record.id
             }
-            errorMessage = nil
+            await refresh(using: auth)
         } catch {
             if let currentIndex = contacts.firstIndex(where: { $0.id == contactID }) {
                 contacts[currentIndex].isFavorite = wasFavorite

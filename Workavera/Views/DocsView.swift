@@ -7,13 +7,12 @@ struct DocsView: View {
     @State private var showLocationSwitcher = false
 
     var body: some View {
-        Group {
-            if !docs.hasLoaded && docs.isLoading {
-                ProgressView("Loading documents…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                documentList
-            }
+        CachedContentView(
+            isLoading: docs.isLoading,
+            hasLoaded: docs.hasLoaded,
+            loadingTitle: "Loading documents…"
+        ) {
+            documentList
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Docs")
@@ -33,12 +32,7 @@ struct DocsView: View {
             }
         }
         .task(id: auth.user?.id) {
-            await docs.loadIfNeeded(using: auth)
-        }
-        .alert("Could Not Load Documents", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { docs.clearError() }
-        } message: {
-            Text(docs.errorMessage ?? "Unknown error")
+            await docs.loadForPresentation(using: auth)
         }
         .sheet(isPresented: $showLocationSwitcher) {
             DocsLocationSwitcherSheet(
@@ -54,17 +48,19 @@ struct DocsView: View {
     private var documentList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
+                if let error = docs.errorMessage {
+                    InlineErrorBanner(message: error) {
+                        Task { await docs.refresh(using: auth) }
+                    }
+                }
+
                 locationHeader
 
                 if docs.documents.isEmpty {
                     ContentUnavailableView {
                         Label("No Documents", systemImage: "doc.text")
                     } description: {
-                        if let error = docs.errorMessage {
-                            Text(error)
-                        } else {
-                            Text("No documents match this location and search.")
-                        }
+                        Text("No documents match this location and search.")
                     } actions: {
                         Button("Refresh") {
                             Task { await docs.refresh(using: auth) }
@@ -172,13 +168,6 @@ struct DocsView: View {
         Binding(get: { docs.page }, set: { page in
             Task { await docs.loadPage(page, using: auth) }
         })
-    }
-
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { docs.errorMessage != nil && !docs.documents.isEmpty },
-            set: { if !$0 { docs.clearError() } }
-        )
     }
 
     private func select(_ filter: DocsViewFilter) {
@@ -454,6 +443,11 @@ private struct DocumentDetailView: View {
     private func documentContent(_ document: WorkspaceDocument) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if let error = docs.errorMessage {
+                    InlineErrorBanner(message: error) {
+                        Task { await docs.loadDocument(id: document.id, using: auth, force: true) }
+                    }
+                }
                 documentHeader(document)
                 Divider()
                 if document.kind == .html {
@@ -524,29 +518,38 @@ private struct DocumentVersionsView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if isLoading {
+                if isLoading && versions.isEmpty {
                     ProgressView("Loading versions…")
-                } else if versions.isEmpty {
-                    ContentUnavailableView(
-                        "No Version History",
-                        systemImage: "clock.arrow.circlepath",
-                        description: Text(errorMessage ?? "No saved versions are available.")
-                    )
                 } else {
-                    List(versions) { version in
-                        NavigationLink {
-                            DocumentVersionDetailView(
-                                documentID: document.id,
-                                kind: document.kind,
-                                revision: version.revision
+                    List {
+                        if let errorMessage {
+                            InlineErrorListSection(message: errorMessage) {
+                                Task { await reloadFromNetwork() }
+                            }
+                        }
+                        if versions.isEmpty {
+                            ContentUnavailableView(
+                                "No Version History",
+                                systemImage: "clock.arrow.circlepath",
+                                description: Text("No saved versions are available.")
                             )
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Version \(version.revision) · \(version.title)")
-                                    .font(.subheadline.weight(.medium))
-                                Text("\(version.source.capitalized) · \(version.createdAt.formatted(.relative(presentation: .named)))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(versions) { version in
+                                NavigationLink {
+                                    DocumentVersionDetailView(
+                                        documentID: document.id,
+                                        kind: document.kind,
+                                        revision: version.revision
+                                    )
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Version \(version.revision) · \(version.title)")
+                                            .font(.subheadline.weight(.medium))
+                                        Text("\(version.source.capitalized) · \(version.createdAt.formatted(.relative(presentation: .named)))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                         }
                     }
@@ -555,16 +558,42 @@ private struct DocumentVersionsView: View {
             .navigationTitle("Version History")
             .navigationBarTitleDisplayMode(.inline)
             .task {
-                do {
-                    versions = try await auth.loadDocumentVersions(id: document.id)
-                    errorMessage = nil
-                } catch {
-                    errorMessage = error.localizedDescription
-                }
-                isLoading = false
+                await load()
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func load() async {
+        do {
+            versions = try await auth.loadDocumentVersions(
+                id: document.id,
+                strategy: .cacheOnly
+            )
+            isLoading = false
+        } catch is CancellationError {
+            return
+        } catch {
+            // Cache misses are expected and are never user-facing.
+        }
+        guard !Task.isCancelled else { return }
+        await reloadFromNetwork()
+    }
+
+    private func reloadFromNetwork() async {
+        if versions.isEmpty { isLoading = true }
+        defer { isLoading = false }
+        do {
+            versions = try await auth.loadDocumentVersions(
+                id: document.id,
+                strategy: .networkOnly
+            )
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -608,12 +637,47 @@ private struct DocumentVersionDetailView: View {
         }
         .navigationTitle("Version \(revision)")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            do {
-                version = try await auth.loadDocumentVersion(id: documentID, revision: revision)
-            } catch {
-                errorMessage = error.localizedDescription
+        .safeAreaInset(edge: .top) {
+            if let errorMessage {
+                InlineErrorBanner(message: errorMessage) {
+                    Task { await reloadFromNetwork() }
+                }
+                .padding(.horizontal, 20)
             }
+        }
+        .task {
+            await load()
+        }
+    }
+
+    private func load() async {
+        do {
+            version = try await auth.loadDocumentVersion(
+                id: documentID,
+                revision: revision,
+                strategy: .cacheOnly
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            // Cache misses are expected and are never user-facing.
+        }
+        guard !Task.isCancelled else { return }
+        await reloadFromNetwork()
+    }
+
+    private func reloadFromNetwork() async {
+        do {
+            version = try await auth.loadDocumentVersion(
+                id: documentID,
+                revision: revision,
+                strategy: .networkOnly
+            )
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

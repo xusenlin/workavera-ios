@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 用户级外观设置，对应 Web 版 Settings 的 Appearance 卡片。
-enum AppAppearance: String, CaseIterable, Identifiable {
+enum AppAppearance: String, Codable, CaseIterable, Identifiable {
     case system
     case light
     case dark

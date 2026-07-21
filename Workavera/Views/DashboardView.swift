@@ -13,52 +13,62 @@ struct DashboardView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                greetingCard
+        CachedContentView(
+            isLoading: dashboard.isLoading,
+            hasLoaded: dashboard.hasLoaded,
+            loadingTitle: "Loading dashboard…"
+        ) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if let errorMessage = dashboard.errorMessage {
+                        InlineErrorBanner(message: errorMessage) {
+                            Task { await dashboard.refresh(using: auth) }
+                        }
+                    }
 
-                LazyVGrid(columns: columns, spacing: 14) {
-                    StatCard(
-                        title: "Active Projects",
-                        icon: "rectangle.split.3x1",
-                        value: dashboard.summary?.activeProjects
-                    )
-                    StatCard(
-                        title: "Open Tasks",
-                        icon: "checklist",
-                        value: dashboard.summary?.openTasks
-                    )
-                    StatCard(
-                        title: "Next 7 Days",
-                        icon: "calendar",
-                        value: dashboard.summary?.nextSevenDays
-                    )
-                    StatCard(
-                        title: "Unread Reading",
-                        icon: "book",
-                        value: dashboard.summary?.unreadReading
-                    )
+                    greetingCard
+
+                    LazyVGrid(columns: columns, spacing: 14) {
+                        StatCard(
+                            title: "Active Projects",
+                            icon: "rectangle.split.3x1",
+                            value: dashboard.summary?.activeProjects
+                        )
+                        StatCard(
+                            title: "Open Tasks",
+                            icon: "checklist",
+                            value: dashboard.summary?.openTasks
+                        )
+                        StatCard(
+                            title: "Next 7 Days",
+                            icon: "calendar",
+                            value: dashboard.summary?.nextSevenDays
+                        )
+                        StatCard(
+                            title: "Unread Reading",
+                            icon: "book",
+                            value: dashboard.summary?.unreadReading
+                        )
+                    }
+
+                    quickLinks
                 }
-
-                quickLinks
+                .padding(20)
             }
-            .padding(20)
+            .scrollBounceBehavior(.always)
+            .refreshable {
+                async let dashboardRefresh: Void = dashboard.refresh(using: auth)
+                async let notificationRefresh: Void = notifications.refresh(using: auth)
+                _ = await (dashboardRefresh, notificationRefresh)
+            }
         }
-        .scrollBounceBehavior(.always)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Dashboard")
         .task(id: auth.user?.id) {
-            await dashboard.loadIfNeeded(using: auth)
+            await dashboard.loadForPresentation(using: auth)
         }
-        .refreshable {
-            async let dashboardRefresh: Void = dashboard.refresh(using: auth)
-            async let notificationRefresh: Void = notifications.refresh(using: auth)
-            _ = await (dashboardRefresh, notificationRefresh)
-        }
-        .alert("Could Not Update Dashboard", isPresented: errorPresented) {
-            Button("OK", role: .cancel) { dashboard.clearError() }
-        } message: {
-            Text(dashboard.errorMessage ?? "Unknown error")
+        .task(id: auth.user?.id) {
+            await dashboard.listenForRealtimeUpdates(using: auth)
         }
     }
 
@@ -139,12 +149,6 @@ struct DashboardView: View {
         }
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { dashboard.errorMessage != nil },
-            set: { if !$0 { dashboard.clearError() } }
-        )
-    }
 }
 
 private struct StatCard: View {
