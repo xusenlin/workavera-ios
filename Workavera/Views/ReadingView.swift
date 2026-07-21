@@ -184,7 +184,7 @@ struct ReadingView: View {
                         Text(item.preview)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                            .lineLimit(1)
 
                         HStack(spacing: 5) {
                             Text(item.host)

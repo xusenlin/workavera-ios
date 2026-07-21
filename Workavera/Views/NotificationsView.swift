@@ -81,19 +81,11 @@ struct NotificationsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 36)
                 } else {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(notifications.items.enumerated()), id: \.element.id) { index, notification in
-                            if index > 0 {
-                                Divider()
-                                    .padding(.leading, 62)
-                            }
+                    LazyVStack(spacing: 12) {
+                        ForEach(notifications.items) { notification in
                             row(notification)
                         }
                     }
-                    .background(
-                        Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    )
                 }
             }
             .padding(20)
@@ -105,68 +97,81 @@ struct NotificationsView: View {
     }
 
     private func row(_ notification: AppNotification) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                Task { await notifications.markRead(notification, using: auth) }
-            } label: {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: notification.type.icon)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(notification.type.color)
-                        .frame(width: 34, height: 34)
-                        .background(notification.type.color.opacity(0.15), in: Circle())
-                        .overlay(alignment: .topLeading) {
-                            if !notification.isRead {
-                                Circle()
-                                    .fill(.red)
-                                    .frame(width: 9, height: 9)
-                                    .overlay(Circle().stroke(Color(.secondarySystemGroupedBackground), lineWidth: 1.5))
-                                    .transition(.scale.combined(with: .opacity))
-                            }
-                        }
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 5) {
-                            if notification.pinned {
-                                Image(systemName: "pin.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Text(notification.title)
-                                .font(.subheadline.weight(notification.isRead ? .regular : .semibold))
-                                .foregroundStyle(.primary)
-                        }
-                        if !notification.body.isEmpty {
-                            Text(notification.body)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Text(notification.createdAt.formatted(.relative(presentation: .named)))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    Spacer(minLength: 4)
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    Task { await notifications.markRead(notification, using: auth) }
+                } label: {
+                    notificationContent(notification)
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, 30)
+                .buttonStyle(.plain)
 
-            if notification.type == .modelShare {
-                modelShareActions(notification)
-                    .padding(.leading, 46)
+                if notification.type == .modelShare {
+                    modelShareActions(notification)
+                        .padding(.leading, 50)
+                }
+            }
+
+            if notifications.isManaging(id: notification.id) {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 28, height: 38)
+            } else {
+                notificationMenu(notification)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .overlay(alignment: .topTrailing) {
-            notificationMenu(notification)
-                .padding(.top, 8)
-                .padding(.trailing, 8)
+        .padding(14)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+
+    private func notificationContent(_ notification: AppNotification) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: notification.type.icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 38, height: 38)
+                .background(
+                    Color.accentColor.opacity(0.15),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+                .overlay(alignment: .topLeading) {
+                    if !notification.isRead {
+                        Circle()
+                            .fill(.red)
+                            .frame(width: 9, height: 9)
+                            .overlay(Circle().stroke(Color(.secondarySystemGroupedBackground), lineWidth: 1.5))
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(notification.title)
+                        .font(.subheadline.weight(notification.isRead ? .regular : .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if notification.pinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                if !notification.body.isEmpty {
+                    Text(notification.body)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Text(notification.createdAt.formatted(.relative(presentation: .named)))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
+        .contentShape(Rectangle())
     }
 
     private func notificationMenu(_ notification: AppNotification) -> some View {
@@ -187,7 +192,7 @@ struct NotificationsView: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 30, height: 30)
+                .frame(width: 30, height: 38)
                 .contentShape(Rectangle())
         }
         .disabled(notifications.isManaging(id: notification.id))
