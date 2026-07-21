@@ -684,6 +684,12 @@ private struct ChatConversationDetailView: View {
                     guard let lastID = messages.last?.id else { return }
                     initialScrollPending = true
                     proxy.scrollTo(lastID, anchor: .bottom)
+                    // The first scrollTo runs before the lazy stack has
+                    // instantiated the last cell, so land it again on the next
+                    // tick once that cell exists.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
                     Task {
                         try? await Task.sleep(for: .milliseconds(600))
                         initialScrollPending = false
