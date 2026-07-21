@@ -262,6 +262,84 @@ final class AuthStore {
         try await makeClient().deleteContactFavorite(id: id, token: token)
     }
 
+    func loadChatConversations(
+        status: ChatConversationStatus,
+        page: Int,
+        pageSize: Int,
+        query: String = "",
+        strategy: DataLoadStrategy = .networkOnly
+    ) async throws -> ChatConversationsPage {
+        guard let token else { throw sessionUnavailableError }
+        return try await load(strategy: strategy) { client in
+            try await client.getChatConversations(
+                status: status,
+                page: page,
+                pageSize: pageSize,
+                query: query,
+                token: token
+            )
+        }
+    }
+
+    func createChatConversation(title: String = "New conversation") async throws -> ChatConversation {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().createChatConversation(title: title, token: token)
+    }
+
+    func updateChatConversation(
+        id: String,
+        update: ChatConversationUpdate
+    ) async throws -> ChatConversation {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().updateChatConversation(id: id, update: update, token: token)
+    }
+
+    func deleteChatConversation(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteChatConversation(id: id, token: token)
+    }
+
+    func loadChatMessages(conversationID: String) async throws -> [ChatMessage] {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getChatMessages(
+            conversationID: conversationID,
+            token: token
+        )
+    }
+
+    func startChatStream(
+        request: ChatStreamRequest
+    ) throws -> AsyncThrowingStream<ChatStreamChunk, Error> {
+        guard let token else { throw sessionUnavailableError }
+        return try makeClient().startChatStream(request: request, token: token)
+    }
+
+    func resumeChatStream(
+        runID: String
+    ) throws -> AsyncThrowingStream<ChatStreamChunk, Error> {
+        guard let token else { throw sessionUnavailableError }
+        return try makeClient().resumeChatStream(runID: runID, token: token)
+    }
+
+    func stopChatRun(runID: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().stopChatRun(runID: runID, token: token)
+    }
+
+    func respondToChatApproval(
+        runID: String,
+        approvalID: String,
+        approved: Bool
+    ) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().respondToChatApproval(
+            runID: runID,
+            approvalID: approvalID,
+            approved: approved,
+            token: token
+        )
+    }
+
     func loadReadingPage(
         filter: ReadingListFilter,
         page: Int,

@@ -96,33 +96,11 @@ struct ReadingView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
-                .foregroundStyle(.tertiary)
-            TextField("Search title, URL, tags or summary", text: $searchInput)
-                .font(.subheadline)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
-                .onSubmit { Task { await store.search(searchInput, using: auth) } }
-            if !searchInput.isEmpty {
-                Button {
-                    searchInput = ""
-                    Task { await store.search("", using: auth) }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.tertiary)
-                }
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 38)
-        .background(
-            Color(.secondarySystemGroupedBackground),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        WorkspaceSearchField(
+            text: $searchInput,
+            prompt: "Search title, URL, tags or summary",
+            onSubmit: { Task { await store.search(searchInput, using: auth) } },
+            onClear: { Task { await store.search("", using: auth) } }
         )
         .padding(.horizontal, 20)
     }

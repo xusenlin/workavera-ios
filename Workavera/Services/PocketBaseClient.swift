@@ -299,6 +299,135 @@ struct PocketBaseClient {
         )
     }
 
+    func getChatConversations(
+        status: ChatConversationStatus,
+        page: Int,
+        pageSize: Int,
+        query: String = "",
+        token: String
+    ) async throws -> ChatConversationsPage {
+        let sort = status == .active
+            ? "-pinned,-last_message_at,-updated"
+            : "-last_message_at,-updated"
+        var filter = "status = \"\(status.rawValue)\""
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedQuery.isEmpty {
+            filter += " && title ~ \"\(Self.filterLiteral(normalizedQuery))\""
+        }
+        let response: RecordListResponse<ChatConversation> = try await send(
+            path: "/api/collections/chat_conversations/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "perPage", value: String(pageSize)),
+                URLQueryItem(name: "filter", value: filter),
+                URLQueryItem(name: "sort", value: sort),
+            ],
+            token: token
+        )
+        return ChatConversationsPage(
+            items: response.items,
+            page: response.page,
+            totalPages: response.totalPages,
+            totalItems: response.totalItems
+        )
+    }
+
+    func createChatConversation(title: String, token: String) async throws -> ChatConversation {
+        struct Body: Encodable { let title: String }
+        return try await sendJSON(
+            path: "/api/collections/chat_conversations/records",
+            method: "POST",
+            body: Body(title: title),
+            token: token
+        )
+    }
+
+    func updateChatConversation(
+        id: String,
+        update: ChatConversationUpdate,
+        token: String
+    ) async throws -> ChatConversation {
+        try await sendJSON(
+            path: "/api/collections/chat_conversations/records/\(id)",
+            method: "PATCH",
+            body: update,
+            token: token
+        )
+    }
+
+    func deleteChatConversation(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/chat_conversations/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    func getChatMessages(conversationID: String, token: String) async throws -> [ChatMessage] {
+        try await send(
+            path: "/api/chat/conversations/\(conversationID)/messages",
+            method: "GET",
+            token: token
+        )
+    }
+
+    func startChatStream(
+        request: ChatStreamRequest,
+        token: String
+    ) -> AsyncThrowingStream<ChatStreamChunk, Error> {
+        let body: Data
+        do {
+            body = try JSONEncoder().encode(request)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: APIError.decoding(error.localizedDescription))
+            }
+        }
+        return chatStream(
+            path: "/api/chat/stream",
+            method: "POST",
+            body: body,
+            token: token
+        )
+    }
+
+    func resumeChatStream(
+        runID: String,
+        token: String
+    ) -> AsyncThrowingStream<ChatStreamChunk, Error> {
+        chatStream(
+            path: "/api/chat/runs/\(runID)/stream",
+            method: "GET",
+            body: nil,
+            token: token
+        )
+    }
+
+    func stopChatRun(runID: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/chat/runs/\(runID)/stop",
+            method: "POST",
+            token: token
+        )
+    }
+
+    func respondToChatApproval(
+        runID: String,
+        approvalID: String,
+        approved: Bool,
+        token: String
+    ) async throws {
+        struct Body: Encodable { let approved: Bool }
+        _ = try await perform(
+            path: "/api/chat/runs/\(runID)/approvals/\(approvalID)",
+            method: "POST",
+            body: try JSONEncoder().encode(Body(approved: approved)),
+            contentType: "application/json",
+            token: token
+        )
+    }
+
     func getReadingPage(
         filter: ReadingListFilter,
         page: Int,
@@ -1509,6 +1638,106 @@ struct PocketBaseClient {
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish()
+                } catch {
+                    if Task.isCancelled {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in streamTask.cancel() }
+        }
+    }
+
+    private func chatStream(
+        path: String,
+        method: String,
+        body: Data?,
+        token: String
+    ) -> AsyncThrowingStream<ChatStreamChunk, Error> {
+        let url = configuration.baseURL.appending(path: path)
+        let session = session
+
+        return AsyncThrowingStream { continuation in
+            let streamTask = Task {
+                do {
+                    var request = URLRequest(url: url)
+                    request.httpMethod = method
+                    request.timeoutInterval = 11 * 60
+                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                    request.setValue(token, forHTTPHeaderField: "Authorization")
+                    if let body {
+                        request.httpBody = body
+                        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    }
+
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw APIError.invalidResponse
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        var errorData = Data()
+                        for try await byte in bytes.prefix(1_048_576) {
+                            errorData.append(byte)
+                        }
+                        let details = Self.errorDetails(from: errorData, statusCode: http.statusCode)
+                        throw APIError.http(
+                            statusCode: http.statusCode,
+                            message: details.message,
+                            fieldMessages: details.fieldMessages
+                        )
+                    }
+
+                    func dispatchFrame(_ frame: Data) throws -> Bool {
+                        let text = String(decoding: frame, as: UTF8.self)
+                        let payload = text
+                            .split(whereSeparator: \.isNewline)
+                            .compactMap { rawLine -> String? in
+                                let line = String(rawLine)
+                                guard line.hasPrefix("data:") else { return nil }
+                                return String(line.dropFirst("data:".count))
+                                    .trimmingCharacters(in: .whitespaces)
+                            }
+                            .joined(separator: "\n")
+                        guard !payload.isEmpty else { return false }
+                        if payload == "[DONE]" { return true }
+                        let chunk = try JSONDecoder().decode(
+                            ChatStreamChunk.self,
+                            from: Data(payload.utf8)
+                        )
+                        continuation.yield(chunk)
+                        return false
+                    }
+
+                    var frameBytes: [UInt8] = []
+                    for try await byte in bytes {
+                        try Task.checkCancellation()
+                        frameBytes.append(byte)
+                        let delimiterLength: Int
+                        if frameBytes.suffix(4).elementsEqual([13, 10, 13, 10]) {
+                            delimiterLength = 4
+                        } else if frameBytes.suffix(2).elementsEqual([10, 10]) {
+                            delimiterLength = 2
+                        } else {
+                            if frameBytes.count > 5 * 1_048_576 {
+                                throw APIError.invalidResponse
+                            }
+                            continue
+                        }
+                        frameBytes.removeLast(delimiterLength)
+                        let done = try dispatchFrame(Data(frameBytes))
+                        frameBytes.removeAll(keepingCapacity: true)
+                        if done { break }
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch let error as URLError where error.code == .cancelled {
+                    continuation.finish()
+                } catch let error as URLError {
+                    continuation.finish(throwing: APIError.transport(error))
                 } catch {
                     if Task.isCancelled {
                         continuation.finish()

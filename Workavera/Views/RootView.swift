@@ -116,6 +116,8 @@ struct RootView: View {
             DashboardView { selection = $0 }
         case .contacts:
             ContactsView()
+        case .chat:
+            ChatView()
         case .reading:
             ReadingView()
         case .board:

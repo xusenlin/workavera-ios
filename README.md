@@ -19,11 +19,13 @@ Workavera（自托管 AI 工作台）的 iOS 客户端，参考 Web 版的模块
 Workavera/
 ├── WorkaveraApp.swift        # 入口：会话恢复 → 登录页 / 主界面
 ├── Models/User.swift         # users 记录模型（含空字段容错解码）
+├── Models/ChatConversation.swift # Chat 对话记录、状态和分页模型
 ├── Services/
 │   ├── PocketBaseClient.swift  # 类型化网络层、用户资料、文件上传与 user_preferences
 │   ├── ServerConfiguration.swift # HTTPS / HTTP 安全策略与地址规范化
 │   └── Keychain.swift          # 按服务器隔离的 token 安全存储
 ├── Stores/AuthStore.swift    # 全局认证、会话恢复与用户偏好（@Observable @MainActor）
+├── Stores/ChatStore.swift    # 对话分页、选择、置顶、归档、恢复和删除
 ├── Components/               # AvatarView（真实头像 + 首字母兜底）、StatusBadge
 └── Views/
     ├── AppSection.swift      # 十个模块的枚举（菜单、图标、占位文案）
@@ -31,10 +33,11 @@ Workavera/
     ├── RootView.swift        # 侧边栏 + 详情
     ├── DashboardView.swift   # 真实用户问候 + 占位统计卡
     ├── ProfileView.swift     # 资料编辑、头像上传、密码修改与在线状态
+    ├── ChatView.swift        # iPhone/iPad 自适应对话列表与管理框架
     ├── SettingsView.swift    # user_preferences、服务器信息与确认退出
     ├── ServerSettingsSheet.swift # 服务器地址与不安全 HTTP 风险确认
     ├── SessionRecoveryView.swift # 可重试的会话恢复失败页
-    └── PlaceholderView.swift # Chat / Board / Docs / Contacts / Calendar / Reading / Notifications 占位
+    └── PlaceholderView.swift # 尚未实现模块的通用占位页
 ```
 
 ## 运行

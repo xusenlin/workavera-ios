@@ -1335,6 +1335,213 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertEqual(event?.record.data.shareStatus, .pending)
     }
 
+    func testChatConversationListUsesStatusPaginationAndWebSort() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/collections/chat_conversations/records")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let components = try XCTUnwrap(
+                URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            )
+            let query = Dictionary(
+                uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+            )
+            XCTAssertEqual(query["page"], "2")
+            XCTAssertEqual(query["perPage"], "20")
+            XCTAssertEqual(query["filter"], "status = \"active\"")
+            XCTAssertEqual(query["sort"], "-pinned,-last_message_at,-updated")
+            let body = Data(#"{"page":2,"totalPages":3,"totalItems":42,"items":[{"id":"chat-1","owner":"user-1","title":"Planning","status":"active","pinned":true,"model_config":"model-1","message_count":8,"tool_call_count":2,"input_tokens":100,"output_tokens":40,"total_tokens":140,"context_tokens":120,"last_message_at":"2026-07-21 08:00:00.000Z","created":"2026-07-20 08:00:00.000Z","updated":"2026-07-21 08:00:00.000Z"}]}"#.utf8)
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+
+        let page = try await makeClient().getChatConversations(
+            status: .active,
+            page: 2,
+            pageSize: 20,
+            token: "token-value"
+        )
+
+        XCTAssertEqual(page.page, 2)
+        XCTAssertEqual(page.totalPages, 3)
+        XCTAssertEqual(page.totalItems, 42)
+        XCTAssertEqual(page.items.first?.title, "Planning")
+        XCTAssertEqual(page.items.first?.pinned, true)
+        XCTAssertEqual(page.items.first?.messageSummary, "8 messages · 2 tools")
+        XCTAssertEqual(page.items.first?.modelConfigID, "model-1")
+    }
+
+    func testChatConversationSearchAddsTitleFilter() async throws {
+        MockURLProtocol.handler = { request in
+            let components = try XCTUnwrap(
+                URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
+            )
+            XCTAssertEqual(
+                components.queryItems?.first(where: { $0.name == "filter" })?.value,
+                "status = \"active\" && title ~ \"Roadmap\""
+            )
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"page":1,"totalPages":1,"totalItems":0,"items":[]}"#.utf8)
+            )
+        }
+
+        let page = try await makeClient().getChatConversations(
+            status: .active,
+            page: 1,
+            pageSize: 20,
+            query: "  Roadmap  ",
+            token: "token-value"
+        )
+
+        XCTAssertEqual(page.totalItems, 0)
+    }
+
+    func testChatMessagesUseProtectedEndpointAndDecodeParts() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/chat-1/messages")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"[{"id":"message-1","role":"user","metadata":{"conversationId":"chat-1","status":"complete"},"parts":[{"type":"text","text":"Hello"}]}]"#.utf8)
+            )
+        }
+
+        let messages = try await makeClient().getChatMessages(
+            conversationID: "chat-1",
+            token: "token-value"
+        )
+
+        XCTAssertEqual(messages.first?.role, .user)
+        XCTAssertEqual(messages.first?.parts.first?.text, "Hello")
+    }
+
+    func testChatStreamSendsNewUserMessageAndDecodesSSEChunks() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/chat/stream")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "text/event-stream")
+            let body = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+            )
+            XCTAssertEqual(body["runId"] as? String, "run-1")
+            XCTAssertEqual(body["conversationId"] as? String, "chat-1")
+            XCTAssertEqual(body["modelConfigId"] as? String, "model-1")
+            let message = try XCTUnwrap(body["message"] as? [String: Any])
+            XCTAssertEqual(message["role"] as? String, "user")
+            let stream = """
+            data: {"type":"start","messageId":"assistant-1","messageMetadata":{"runId":"run-1"}}
+
+            data: {"type":"text-delta","id":"text-1","delta":"Hello"}
+
+            data: [DONE]
+
+            """
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "text/event-stream"]
+                )!,
+                Data(stream.utf8)
+            )
+        }
+        let request = ChatStreamRequest(
+            runID: "run-1",
+            conversationID: "chat-1",
+            modelConfigID: "model-1",
+            message: ChatMessage(
+                id: "user-1",
+                role: .user,
+                parts: [ChatMessagePart(type: "text", text: "Hello")]
+            )
+        )
+
+        var chunks: [ChatStreamChunk] = []
+        let client = try makeClient()
+        for try await chunk in client.startChatStream(
+            request: request,
+            token: "token-value"
+        ) {
+            chunks.append(chunk)
+        }
+
+        XCTAssertEqual(chunks.map(\.type), ["start", "text-delta"])
+        XCTAssertEqual(chunks.first?.messageID, "assistant-1")
+        XCTAssertEqual(chunks.last?.delta, "Hello")
+    }
+
+    func testChatConversationMutationsUsePocketBaseRecordAPI() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/api/collections/chat_conversations/records"):
+                let body = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: String]
+                )
+                XCTAssertEqual(body, ["title": "New conversation"])
+                return Self.chatConversationResponse(for: request, title: "New conversation")
+
+            case ("PATCH", "/api/collections/chat_conversations/records/chat-1"):
+                let body = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Any]
+                )
+                XCTAssertEqual(body["title"] as? String, "Renamed")
+                XCTAssertEqual(body["pinned"] as? Bool, true)
+                XCTAssertNil(body["status"])
+                return Self.chatConversationResponse(
+                    for: request,
+                    title: "Renamed",
+                    pinned: true
+                )
+
+            case ("DELETE", "/api/collections/chat_conversations/records/chat-1"):
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!,
+                    Data()
+                )
+
+            default:
+                XCTFail("Unexpected chat request: \(request.httpMethod ?? "nil") \(request.url?.absoluteString ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+        let client = try makeClient()
+
+        let created = try await client.createChatConversation(
+            title: "New conversation",
+            token: "token-value"
+        )
+        let updated = try await client.updateChatConversation(
+            id: created.id,
+            update: ChatConversationUpdate(title: "Renamed", pinned: true),
+            token: "token-value"
+        )
+        try await client.deleteChatConversation(id: updated.id, token: "token-value")
+
+        XCTAssertEqual(updated.title, "Renamed")
+        XCTAssertTrue(updated.pinned)
+    }
+
+    private static func chatConversationResponse(
+        for request: URLRequest,
+        title: String,
+        pinned: Bool = false
+    ) -> (HTTPURLResponse, Data) {
+        let body = Data(
+            #"{"id":"chat-1","owner":"user-1","title":"\#(title)","status":"active","pinned":\#(pinned),"model_config":"","message_count":0,"tool_call_count":0,"input_tokens":0,"output_tokens":0,"total_tokens":0,"context_tokens":0,"last_message_at":"","created":"2026-07-21 08:00:00.000Z","updated":"2026-07-21 08:00:00.000Z"}"#.utf8
+        )
+        return (
+            HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+            body
+        )
+    }
+
     private func makeClient() throws -> PocketBaseClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

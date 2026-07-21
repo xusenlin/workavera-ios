@@ -13,6 +13,7 @@ struct WorkaveraApp: App {
     @State private var savedMemories = SavedMemoriesStore()
     @State private var contacts = ContactsStore()
     @State private var reading = ReadingStore()
+    @State private var chat = ChatStore()
 
     var body: some Scene {
         WindowGroup {
@@ -40,6 +41,7 @@ struct WorkaveraApp: App {
             .environment(savedMemories)
             .environment(contacts)
             .environment(reading)
+            .environment(chat)
             .preferredColorScheme(auth.appearance.colorScheme)
         }
     }
