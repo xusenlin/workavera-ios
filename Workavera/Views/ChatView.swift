@@ -1,5 +1,6 @@
 import MarkdownUI
 import SwiftUI
+import UIKit
 
 struct ChatView: View {
     @Environment(AuthStore.self) private var auth
@@ -442,6 +443,15 @@ private struct ChatConversationDetailView: View {
         store.messages(for: conversationID)
     }
 
+    private var contextInfo: ChatContextInfo? {
+        guard let model = modelStore.models.first(where: { $0.id == selectedModelID }) else { return nil }
+        return ChatContextInfo.derive(
+            messages: messages,
+            conversation: conversation,
+            maxTokens: model.maxContextTokens
+        )
+    }
+
     private var isLoadingMessages: Bool {
         store.loadingMessageConversationIDs.contains(conversationID)
     }
@@ -459,6 +469,7 @@ private struct ChatConversationDetailView: View {
                         draft: $draft,
                         selectedModelID: $selectedModelID,
                         models: modelStore.models,
+                        contextInfo: contextInfo,
                         isLoading: isLoadingMessages,
                         isGenerating: isGenerating,
                         send: submit,
@@ -647,6 +658,7 @@ private struct ChatComposer: View {
     @Binding var selectedModelID: String
 
     let models: [LLMModelConfiguration]
+    let contextInfo: ChatContextInfo?
     let isLoading: Bool
     let isGenerating: Bool
     let send: () -> Void
@@ -690,6 +702,10 @@ private struct ChatComposer: View {
                 }
                 .disabled(models.isEmpty || isGenerating)
 
+                if let contextInfo, contextInfo.maxTokens > 0, contextInfo.usedTokens > 0 {
+                    ContextGauge(info: contextInfo)
+                }
+
                 Spacer()
 
                 if isGenerating {
@@ -722,15 +738,368 @@ private struct ChatComposer: View {
             Color(.secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(.separator), lineWidth: 1)
+        )
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
     }
 
     private var selectedModelName: String {
         models.first(where: { $0.id == selectedModelID })?.name
             ?? (models.isEmpty ? "No model" : "Select model")
+    }
+}
+
+/// Snapshot of how much of the model's context window the conversation
+/// currently occupies, plus accumulated usage, rendered by ``ContextGauge``.
+private struct ChatContextInfo: Equatable {
+    var usedTokens: Int
+    var maxTokens: Int
+    var estimated: Bool
+    var usage: ChatTokenUsage?
+    var totalInputTokens: Int
+    var totalOutputTokens: Int
+
+    var usedFraction: Double {
+        guard maxTokens > 0 else { return 0 }
+        return min(Double(usedTokens) / Double(maxTokens), 1)
+    }
+
+    var percentText: String {
+        guard maxTokens > 0 else { return "—" }
+        let percent = Double(usedTokens) / Double(maxTokens) * 100
+        let value = percent >= 10
+            ? String(Int(percent.rounded()))
+            : String(format: "%.1f", percent)
+        return "\(estimated ? "~" : "")\(value)%"
+    }
+
+    /// Derives occupancy from the newest assistant message that reported
+    /// usage, falling back to the conversation's persisted snapshot.
+    static func derive(
+        messages: [ChatMessage],
+        conversation: ChatConversation?,
+        maxTokens: Int
+    ) -> ChatContextInfo {
+        let totalInput = conversation?.inputTokens ?? 0
+        let totalOutput = conversation?.outputTokens ?? 0
+
+        for message in messages.reversed() {
+            guard message.role == .assistant, let metadata = message.metadata else { continue }
+            guard metadata.usage != nil || metadata.contextTokens != nil else { continue }
+            let usage = metadata.contextUsage ?? metadata.usage
+            let used = metadata.contextTokens
+                ?? usage.map { $0.inputTokens + $0.outputTokens }
+                ?? 0
+            return ChatContextInfo(
+                usedTokens: used,
+                maxTokens: maxTokens,
+                estimated: metadata.contextTokensEstimated == true,
+                usage: usage,
+                totalInputTokens: totalInput,
+                totalOutputTokens: totalOutput
+            )
+        }
+
+        return ChatContextInfo(
+            usedTokens: conversation?.contextTokens ?? 0,
+            maxTokens: maxTokens,
+            estimated: false,
+            usage: nil,
+            totalInputTokens: totalInput,
+            totalOutputTokens: totalOutput
+        )
+    }
+}
+
+private struct ContextGauge: View {
+    let info: ChatContextInfo
+
+    @State private var showDetails = false
+
+    var body: some View {
+        Button { showDetails = true } label: {
+            HStack(spacing: 5) {
+                Text(info.percentText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ring
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Context usage \(info.percentText)")
+        .popover(isPresented: $showDetails) {
+            ContextDetails(info: info)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var ring: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: info.usedFraction)
+                .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 15, height: 15)
+    }
+
+    private var ringColor: Color {
+        switch info.usedFraction {
+        case ..<0.75: .accentColor
+        case ..<0.9: .orange
+        default: .red
+        }
+    }
+}
+
+private struct ContextDetails: View {
+    let info: ChatContextInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(info.percentText)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text(windowText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView(value: info.usedFraction)
+                    .tint(.accentColor)
+            }
+
+            if let usage = info.usage {
+                Divider()
+                VStack(spacing: 5) {
+                    detailRow("Cache hit", value: LLMTokenFormat.display(usage.cacheReadTokens))
+                    detailRow("Cache write", value: LLMTokenFormat.display(usage.cacheCreationTokens))
+                }
+            }
+
+            if info.maxTokens > 0 {
+                Divider()
+                detailRow(
+                    "Compacts at",
+                    value: "\(LLMTokenFormat.display(Int(Double(info.maxTokens) * 0.75))) (75%)"
+                )
+            }
+
+            Divider()
+            VStack(spacing: 5) {
+                detailRow("Total input", value: LLMTokenFormat.display(info.totalInputTokens))
+                detailRow("Total output", value: LLMTokenFormat.display(info.totalOutputTokens))
+            }
+        }
+        .padding(14)
+        .frame(width: 240)
+    }
+
+    private var windowText: String {
+        guard info.maxTokens > 0 else { return LLMTokenFormat.display(info.usedTokens) }
+        return "\(LLMTokenFormat.display(info.usedTokens)) / \(LLMTokenFormat.display(info.maxTokens))"
+    }
+
+    private func detailRow(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption)
+        }
+    }
+}
+
+/// Collapsible reasoning ("thinking") section styled after the web app: a
+/// brain glyph and a muted label, with a chevron that follows the text color
+/// instead of the accent tint.
+private struct ReasoningDisclosure: View {
+    let text: String
+    let isStreaming: Bool
+
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13))
+                    Text(isStreaming ? "Thinking…" : "Thought")
+                        .font(.subheadline)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(expanded ? 0 : -90))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// Fenced code block with a language tag, copy button, monospaced content,
+/// and a theme-aware gray surface. Horizontally scrollable for long lines.
+private struct CodeBlockView: View {
+    let configuration: CodeBlockConfiguration
+
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(languageLabel)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button(action: copy) {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .font(.caption2.weight(.medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(copied ? Color.green : Color.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+
+            Divider()
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                configuration.label
+                    .relativeLineSpacing(.em(0.2))
+                    .markdownTextStyle {
+                        FontFamilyVariant(.monospaced)
+                        FontSize(.em(0.88))
+                    }
+                    .padding(12)
+            }
+        }
+        .background(Color(.secondarySystemFill))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .markdownMargin(bottom: 12)
+    }
+
+    private var languageLabel: String {
+        let language = configuration.language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return language.isEmpty ? "code" : language.lowercased()
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = configuration.content
+        withAnimation { copied = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation { copied = false }
+        }
+    }
+}
+
+/// Lightweight, dependency-free syntax colorizer. It doesn't parse any single
+/// language precisely; it applies one uniform color scheme to the elements
+/// common across languages — comments, strings, numbers, and keywords — which
+/// is enough for readable chat code blocks.
+private struct WorkspaceCodeHighlighter: CodeSyntaxHighlighter {
+    func highlightCode(_ code: String, language: String?) -> Text {
+        CodeColoring.segments(of: code).reduce(Text("")) { partial, segment in
+            let piece = Text(segment.text)
+            return partial + (segment.color.map { piece.foregroundColor($0) } ?? piece)
+        }
+    }
+}
+
+private enum CodeColoring {
+    struct Segment {
+        let text: String
+        let color: Color?
+    }
+
+    private static let keywords = [
+        "func", "function", "def", "fn", "return", "let", "var", "const", "val",
+        "class", "struct", "enum", "interface", "protocol", "extension", "import",
+        "export", "from", "package", "namespace", "if", "else", "elif", "for",
+        "while", "do", "switch", "case", "break", "continue", "default", "guard",
+        "defer", "try", "catch", "throw", "throws", "finally", "async", "await",
+        "yield", "public", "private", "protected", "internal", "static", "final",
+        "abstract", "override", "new", "self", "this", "super", "nil", "null",
+        "true", "false", "void", "in", "is", "as", "typeof", "instanceof",
+        "lambda", "where", "pub", "impl", "trait", "match", "mut", "use",
+    ].joined(separator: "|")
+
+    private static let regex: NSRegularExpression? = {
+        let pattern = #"(?<comment>//[^\n]*|#[^\n]*|/\*[\s\S]*?\*/)|(?<string>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(?<number>\b0x[0-9a-fA-F]+\b|\b\d[\d_]*\.?\d*\b)|(?<keyword>\b(?:\#(keywords))\b)"#
+        return try? NSRegularExpression(pattern: pattern)
+    }()
+
+    static func segments(of code: String) -> [Segment] {
+        guard let regex else { return [Segment(text: code, color: nil)] }
+        let ns = code as NSString
+        var segments: [Segment] = []
+        var cursor = 0
+
+        regex.enumerateMatches(in: code, range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+            guard let match else { return }
+            let range = match.range
+            if range.location > cursor {
+                let plain = ns.substring(with: NSRange(location: cursor, length: range.location - cursor))
+                segments.append(Segment(text: plain, color: nil))
+            }
+            segments.append(Segment(text: ns.substring(with: range), color: color(for: match)))
+            cursor = range.location + range.length
+        }
+
+        if cursor < ns.length {
+            segments.append(Segment(text: ns.substring(from: cursor), color: nil))
+        }
+        return segments
+    }
+
+    private static func color(for match: NSTextCheckingResult) -> Color? {
+        if match.range(withName: "comment").location != NSNotFound { return SyntaxColor.comment }
+        if match.range(withName: "string").location != NSNotFound { return SyntaxColor.string }
+        if match.range(withName: "number").location != NSNotFound { return SyntaxColor.number }
+        if match.range(withName: "keyword").location != NSNotFound { return SyntaxColor.keyword }
+        return nil
+    }
+}
+
+/// Xcode-like token colors that adapt to light/dark appearance.
+private enum SyntaxColor {
+    static let keyword = dynamic(light: (0.61, 0.12, 0.55), dark: (0.94, 0.47, 0.71))
+    static let string = dynamic(light: (0.77, 0.20, 0.18), dark: (0.98, 0.60, 0.54))
+    static let number = dynamic(light: (0.11, 0.35, 0.80), dark: (0.60, 0.80, 1.00))
+    static let comment = dynamic(light: (0.42, 0.48, 0.44), dark: (0.50, 0.58, 0.55))
+
+    private static func dynamic(
+        light: (CGFloat, CGFloat, CGFloat),
+        dark: (CGFloat, CGFloat, CGFloat)
+    ) -> Color {
+        Color(UIColor { trait in
+            let rgb = trait.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1)
+        })
     }
 }
 
@@ -848,19 +1217,16 @@ private struct AssistantMessagePartView: View {
                         .textSelection(.enabled)
                 } else {
                     Markdown(text)
+                        .markdownBlockStyle(\.codeBlock) { configuration in
+                            CodeBlockView(configuration: configuration)
+                        }
+                        .markdownCodeSyntaxHighlighter(WorkspaceCodeHighlighter())
                         .textSelection(.enabled)
                 }
             }
         case "reasoning":
             if let text = part.text, !text.isEmpty {
-                DisclosureGroup("Reasoning") {
-                    Text(text)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .padding(.top, 6)
-                }
-                .font(.subheadline)
+                ReasoningDisclosure(text: text, isStreaming: isStreaming)
             }
         case "dynamic-tool":
             ChatToolCard(
@@ -1067,13 +1433,39 @@ private struct JSONSection: View {
     let title: String
     let value: JSONValue
 
+    /// Above this length the payload is truncated in the UI to avoid the
+    /// stutter of laying out a very large monospaced Text; the full value is
+    /// always available via the copy button.
+    private static let previewLimit = 600
+
+    private var fullText: String { value.prettyPrinted }
+    private var isTruncated: Bool { fullText.count > Self.previewLimit }
+
+    private var displayText: String {
+        guard isTruncated else { return fullText }
+        return String(fullText.prefix(Self.previewLimit))
+            + "\n… (\(fullText.count - Self.previewLimit) more characters)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title)
-                .font(.caption.weight(.semibold))
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    UIPasteboard.general.string = fullText
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.caption2)
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .accessibilityLabel("Copy \(title)")
+            }
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(value.prettyPrinted)
+                Text(displayText)
                     .font(.system(.caption2, design: .monospaced))
                     .textSelection(.enabled)
             }
