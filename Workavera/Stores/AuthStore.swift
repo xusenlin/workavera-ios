@@ -86,6 +86,12 @@ final class AuthStore {
         )
     }
 
+    /// Builds a PocketBase file URL, e.g. for contact avatars referenced by
+    /// assistant tool results.
+    func fileURL(collectionId: String, recordId: String, fileName: String) -> URL? {
+        try? makeClient().fileURL(collectionId: collectionId, recordId: recordId, fileName: fileName)
+    }
+
     func updateServerSettings(address: String, allowInsecureHTTP: Bool) throws {
         let configuration = try ServerConfiguration(
             address: address,

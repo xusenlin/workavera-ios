@@ -1417,6 +1417,14 @@ private struct AssistantMessagePartView: View {
                 MemoryToolCard(part: part)
             } else if part.toolName?.hasPrefix("docs_") == true {
                 DocsToolCard(part: part)
+            } else if part.toolName == "contacts_search" {
+                ContactsToolCard(part: part)
+            } else if part.toolName?.hasPrefix("board_") == true && part.toolName != "board_delete_task" {
+                BoardToolCard(part: part)
+            } else if part.toolName?.hasPrefix("calendar_") == true && part.toolName != "calendar_delete_event" {
+                CalendarToolCard(part: part)
+            } else if part.toolName?.hasPrefix("reading_") == true {
+                ReadingToolCard(part: part)
             } else {
                 ChatToolCard(
                     part: part,
@@ -1937,6 +1945,1053 @@ private struct DocsToolCard: View {
                         .lineLimit(1)
                 }
             }
+        }
+    }
+}
+
+/// Purpose-built card for the read-only `contacts_search` tool. Collapsed by
+/// default; expanding shows the matched contacts with avatar, title and
+/// presence dot instead of the raw JSON the generic tool card would show.
+private struct ContactsToolCard: View {
+    @Environment(AuthStore.self) private var auth
+
+    let part: ChatMessagePart
+
+    @State private var expanded = false
+
+    private static let rowLimit = 4
+
+    private var isWorking: Bool {
+        part.state == "input-streaming" || part.state == "input-available"
+    }
+    private var isError: Bool { part.state == "output-error" }
+    private var tint: Color { isError ? .red : .accentColor }
+
+    private var payload: ContactsToolPayload? {
+        guard part.state == "output-available" else { return nil }
+        return ContactsToolPayload(output: part.output)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            expandedContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "person.2")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        tint.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Search Contacts")
+                        .font(.subheadline.weight(.medium))
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if isWorking {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35))
+        )
+    }
+
+    private var subtitle: String {
+        if isWorking { return "Searching…" }
+        if isError { return "Failed" }
+        guard let payload else { return "Completed" }
+        if payload.contacts.isEmpty { return "No contacts found" }
+        return payload.contacts.count == 1 ? "1 contact" : "\(payload.contacts.count) contacts"
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if isWorking, let query = part.input?.objectValue?["query"]?.stringValue, !query.isEmpty {
+                Label(query, systemImage: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let payload {
+                if payload.contacts.isEmpty, !isError {
+                    Text("No contacts found")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(payload.contacts.prefix(Self.rowLimit)) { contact in
+                    contactRow(contact)
+                }
+                if payload.contacts.count > Self.rowLimit {
+                    Text("+\(payload.contacts.count - Self.rowLimit) more")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            if isError, let errorText = part.errorText {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func contactRow(_ contact: ContactsToolPayload.Contact) -> some View {
+        HStack(spacing: 8) {
+            AvatarView(
+                url: avatarURL(for: contact),
+                name: contact.name,
+                size: 24
+            )
+            Text(contact.name.isEmpty ? "Unknown" : contact.name)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+            if let title = contact.title {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if let status = contact.status {
+                StatusDot(status: status, size: 7)
+            }
+        }
+    }
+
+    private func avatarURL(for contact: ContactsToolPayload.Contact) -> URL? {
+        guard let avatar = contact.avatar else { return nil }
+        return auth.fileURL(
+            collectionId: contact.collectionID ?? "users",
+            recordId: contact.id,
+            fileName: avatar
+        )
+    }
+}
+
+/// Purpose-built card for the `board_*` assistant tools (projects, tasks,
+/// templates and mutations). Collapsed by default. `board_delete_task` is
+/// approval-gated and stays on the generic tool card, which renders the
+/// approve/reject flow.
+private struct BoardToolCard: View {
+    @Environment(AuthStore.self) private var auth
+
+    let part: ChatMessagePart
+
+    @State private var expanded = false
+
+    private static let rowLimit = 4
+
+    private var toolName: String { part.toolName ?? "" }
+    private var isWorking: Bool {
+        part.state == "input-streaming" || part.state == "input-available"
+    }
+    private var isError: Bool { part.state == "output-error" }
+    private var tint: Color { isError ? .red : .accentColor }
+
+    private var payload: BoardToolPayload? {
+        guard part.state == "output-available" else { return nil }
+        return BoardToolPayload(toolName: toolName, output: part.output)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            expandedContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: meta.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        tint.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(meta.label)
+                        .font(.subheadline.weight(.medium))
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if isWorking {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35))
+        )
+    }
+
+    private var meta: (label: String, icon: String, working: String) {
+        switch toolName {
+        case "board_search_projects": ("Search Projects", "square.3.layers.3d", "Searching…")
+        case "board_get_project": ("Project Details", "square.3.layers.3d", "Loading…")
+        case "board_search_tasks": ("Search Tasks", "checklist", "Searching…")
+        case "board_list_templates": ("Project Templates", "rectangle.grid.2x2", "Loading…")
+        case "board_create_project": ("Create Project", "plus", "Creating…")
+        case "board_update_project": ("Update Project", "pencil", "Updating…")
+        case "board_upsert_state": ("Upsert States", "square.stack.3d.up", "Saving…")
+        case "board_upsert_label": ("Upsert Labels", "tag", "Saving…")
+        case "board_upsert_member": ("Upsert Members", "person.2", "Saving…")
+        case "board_create_task": ("Create Tasks", "plus", "Creating…")
+        case "board_update_task": ("Update Tasks", "pencil", "Updating…")
+        default: ("Board Tool", "square.3.layers.3d", "Working…")
+        }
+    }
+
+    private var subtitle: String {
+        if isWorking { return meta.working }
+        if isError { return "Failed" }
+        guard let payload else { return "Completed" }
+        switch toolName {
+        case "board_search_projects":
+            return payload.projects.count == 1 ? "1 project" : "\(payload.projects.count) projects"
+        case "board_get_project":
+            return payload.projects.first?.name ?? "Completed"
+        case "board_search_tasks":
+            return payload.tasks.count == 1 ? "1 task" : "\(payload.tasks.count) tasks"
+        case "board_list_templates":
+            return payload.templates.count == 1 ? "1 template" : "\(payload.templates.count) templates"
+        default:
+            if payload.isBatchMutation {
+                return "\(payload.mutationSucceeded) of \(payload.mutationTotal) succeeded"
+            }
+            return payload.mutationItems.first?.detail ?? "Completed"
+        }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if isWorking, let query = part.input?.objectValue?["query"]?.stringValue, !query.isEmpty {
+                Label(query, systemImage: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let payload {
+                switch toolName {
+                case "board_search_projects", "board_get_project":
+                    projectList(payload.projects)
+                case "board_search_tasks":
+                    taskList(payload.tasks)
+                case "board_list_templates":
+                    templateList(payload.templates)
+                default:
+                    mutationList(payload)
+                }
+            }
+            if isError, let errorText = part.errorText {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    // MARK: - Projects
+
+    @ViewBuilder
+    private func projectList(_ projects: [BoardToolPayload.Project]) -> some View {
+        if projects.isEmpty {
+            Text("No matching projects")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        ForEach(projects.prefix(Self.rowLimit)) { project in
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(project.name)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                    if project.archived {
+                        Text("Archived")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                    }
+                    if let role = project.role {
+                        Text(role.capitalized)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                    }
+                    Spacer(minLength: 8)
+                    Text(project.taskCount == 1 ? "1 task" : "\(project.taskCount) tasks")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if let description = project.description {
+                    Text(description)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                if !project.states.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(project.states) { state in
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(state.color.map(Color.init(hex:)) ?? .gray)
+                                        .frame(width: 6, height: 6)
+                                    Text(state.name)
+                                    if let count = state.taskCount {
+                                        Text("\(count)")
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if projects.count > Self.rowLimit {
+            Text("+\(projects.count - Self.rowLimit) more")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Tasks
+
+    @ViewBuilder
+    private func taskList(_ tasks: [BoardToolPayload.Task]) -> some View {
+        if tasks.isEmpty {
+            Text("No matching tasks")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        ForEach(tasks.prefix(Self.rowLimit)) { task in
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(task.title)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(2)
+                    if let description = task.description {
+                        Text(description)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    HStack(spacing: 6) {
+                        if let stateName = task.stateName {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(task.stateColor.map(Color.init(hex:)) ?? .gray)
+                                    .frame(width: 6, height: 6)
+                                Text(stateName)
+                            }
+                        }
+                        if let priority = task.priority, priority != .none {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(priority.color)
+                                    .frame(width: 6, height: 6)
+                                Text(priority.label)
+                            }
+                        }
+                        if let dueDate = task.dueDate {
+                            Text(dueDate)
+                                .foregroundStyle(task.isOverdue ? Color.red : Color(.tertiaryLabel))
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    if let projectName = task.projectName {
+                        Text(projectName)
+                            .font(.caption2)
+                            .foregroundStyle(.quaternary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                if !task.assignees.isEmpty {
+                    HStack(spacing: -6) {
+                        ForEach(task.assignees.prefix(3)) { assignee in
+                            AvatarView(url: avatarURL(for: assignee), name: assignee.name, size: 20)
+                                .overlay(Circle().stroke(Color(.secondarySystemGroupedBackground), lineWidth: 1.5))
+                        }
+                    }
+                }
+            }
+        }
+        if tasks.count > Self.rowLimit {
+            Text("+\(tasks.count - Self.rowLimit) more")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Templates
+
+    @ViewBuilder
+    private func templateList(_ templates: [BoardToolPayload.Template]) -> some View {
+        if templates.isEmpty {
+            Text("No templates available")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        ForEach(templates.prefix(Self.rowLimit)) { template in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(template.name)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                if let description = template.description {
+                    Text(description)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Text("\(template.stateCount) states · \(template.labelCount) labels")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        if templates.count > Self.rowLimit {
+            Text("+\(templates.count - Self.rowLimit) more")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Mutations
+
+    private func mutationList(_ payload: BoardToolPayload) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(payload.mutationItems.prefix(Self.rowLimit)) { item in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: item.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(item.ok ? .green : .red)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name ?? "Record \(item.index + 1)")
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                        if let detail = item.detail, !detail.isEmpty {
+                            Text(detail.capitalized)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if let error = item.error {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if payload.mutationItems.count > Self.rowLimit {
+                Text("+\(payload.mutationItems.count - Self.rowLimit) more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func avatarURL(for participant: BoardToolPayload.Participant) -> URL? {
+        guard let avatar = participant.avatar else { return nil }
+        return auth.fileURL(
+            collectionId: participant.collectionID ?? "users",
+            recordId: participant.id,
+            fileName: avatar
+        )
+    }
+}
+
+/// Purpose-built card for `calendar_get_schedule`, `calendar_create_event`
+/// and `calendar_update_event`. Collapsed by default. `calendar_delete_event`
+/// is approval-gated and stays on the generic tool card.
+private struct CalendarToolCard: View {
+    let part: ChatMessagePart
+
+    @State private var expanded = false
+
+    private static let dayRowLimit = 3
+    private static let mutationRowLimit = 4
+
+    private var toolName: String { part.toolName ?? "" }
+    private var isWorking: Bool {
+        part.state == "input-streaming" || part.state == "input-available"
+    }
+    private var isError: Bool { part.state == "output-error" }
+    private var tint: Color { isError ? .red : .accentColor }
+
+    private var payload: CalendarToolPayload? {
+        guard part.state == "output-available" else { return nil }
+        return CalendarToolPayload(toolName: toolName, output: part.output)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            expandedContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: meta.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        tint.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(meta.label)
+                        .font(.subheadline.weight(.medium))
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if isWorking {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35))
+        )
+    }
+
+    private var meta: (label: String, icon: String, working: String) {
+        switch toolName {
+        case "calendar_get_schedule": ("Schedule", "calendar", "Loading…")
+        case "calendar_create_event": ("Create Events", "calendar.badge.plus", "Creating…")
+        case "calendar_update_event": ("Update Events", "pencil", "Updating…")
+        default: ("Calendar Tool", "calendar", "Working…")
+        }
+    }
+
+    private var subtitle: String {
+        if isWorking { return meta.working }
+        if isError { return "Failed" }
+        guard let payload else { return "Completed" }
+        if toolName == "calendar_get_schedule" {
+            let total = payload.days.reduce(0) { $0 + $1.events.count + $1.tasks.count }
+            if total == 0 { return "Nothing scheduled" }
+            return total == 1 ? "1 item" : "\(total) items"
+        }
+        if payload.isBatchMutation {
+            return "\(payload.mutationSucceeded) of \(payload.mutationTotal) succeeded"
+        }
+        return payload.mutationItems.first?.action?.capitalized ?? "Completed"
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let payload {
+                if toolName == "calendar_get_schedule" {
+                    scheduleView(payload)
+                } else {
+                    mutationList(payload)
+                }
+            }
+            if isError, let errorText = part.errorText {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    // MARK: - Schedule
+
+    @ViewBuilder
+    private func scheduleView(_ payload: CalendarToolPayload) -> some View {
+        if payload.days.allSatisfy({ $0.events.isEmpty && $0.tasks.isEmpty }) {
+            Text("Nothing scheduled")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        ForEach(payload.days) { day in
+            if !day.events.isEmpty || !day.tasks.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    dayHeader(day.date)
+                    ForEach(day.events.prefix(Self.dayRowLimit)) { event in
+                        eventRow(event)
+                    }
+                    if day.events.count > Self.dayRowLimit {
+                        Text("+\(day.events.count - Self.dayRowLimit) more events")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    ForEach(day.tasks.prefix(Self.dayRowLimit)) { task in
+                        taskRow(task)
+                    }
+                    if day.tasks.count > Self.dayRowLimit {
+                        Text("+\(day.tasks.count - Self.dayRowLimit) more tasks")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dayHeader(_ date: String) -> some View {
+        HStack(spacing: 6) {
+            Text(Self.dayFormatter.date(from: date).map {
+                $0.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+            } ?? date)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if isToday(date) {
+                Text("Today")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+            }
+        }
+    }
+
+    private func eventRow(_ event: CalendarToolPayload.Event) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(event.color?.color ?? Color.accentColor)
+                .frame(width: 3)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(event.title)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                    if let recurrence = event.recurrence, recurrence != .none {
+                        Text(recurrence.label)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                    }
+                }
+                Text(event.allDay ? "All day" : timeRange(event))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                if let location = event.location {
+                    Label(location, systemImage: "mappin")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private func taskRow(_ task: CalendarToolPayload.ScheduleTask) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
+                .font(.caption)
+                .foregroundStyle(task.completed ? .green : Color(.tertiaryLabel))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(task.completed ? .secondary : .primary)
+                    .strikethrough(task.completed)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let priority = task.priority, priority != .none {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(priority.color)
+                                .frame(width: 6, height: 6)
+                            Text(priority.label)
+                        }
+                    }
+                    if let dueDate = task.dueDate {
+                        Text("Due \(dueDate)")
+                    }
+                    if let projectName = task.projectName {
+                        Text(projectName)
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: - Mutations
+
+    private func mutationList(_ payload: CalendarToolPayload) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(payload.mutationItems.prefix(Self.mutationRowLimit)) { item in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: item.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(item.ok ? .green : .red)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title ?? "Event \(item.index + 1)")
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                        if let action = item.action {
+                            Text(action.capitalized)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if let error = item.error {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if payload.mutationItems.count > Self.mutationRowLimit {
+                Text("+\(payload.mutationItems.count - Self.mutationRowLimit) more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    // MARK: - Date helpers
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private func isToday(_ date: String) -> Bool {
+        guard let day = Self.dayFormatter.date(from: date) else { return false }
+        return Calendar.current.isDateInToday(day)
+    }
+
+    private func timeRange(_ event: CalendarToolPayload.Event) -> String {
+        let start = event.start?.formatted(date: .omitted, time: .shortened) ?? ""
+        let end = event.end?.formatted(date: .omitted, time: .shortened) ?? ""
+        guard !start.isEmpty, !end.isEmpty else { return start + end }
+        return "\(start) – \(end)"
+    }
+}
+
+/// Purpose-built card for the `reading_*` assistant tools. Collapsed by
+/// default; search shows the matched items with status dots and tags, item
+/// tools show the summary and key points instead of raw JSON.
+private struct ReadingToolCard: View {
+    let part: ChatMessagePart
+
+    @State private var expanded = false
+
+    private static let rowLimit = 4
+
+    private var toolName: String { part.toolName ?? "" }
+    private var isWorking: Bool {
+        part.state == "input-streaming" || part.state == "input-available"
+    }
+    private var isError: Bool { part.state == "output-error" }
+    private var tint: Color { isError ? .red : .accentColor }
+
+    private var payload: ReadingToolPayload? {
+        guard part.state == "output-available" else { return nil }
+        return ReadingToolPayload(toolName: toolName, output: part.output)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            expandedContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: meta.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        tint.opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(meta.label)
+                        .font(.subheadline.weight(.medium))
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if isWorking {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35))
+        )
+    }
+
+    private var meta: (label: String, icon: String, working: String) {
+        switch toolName {
+        case "reading_search": ("Reading List", "book", "Searching…")
+        case "reading_upsert": ("Save Reading Items", "pencil", "Saving…")
+        case "reading_get": ("Reading Item", "doc.text", "Loading…")
+        case "reading_summarize": ("Summarize Reading", "sparkles", "Summarizing…")
+        default: ("Reading Tool", "book", "Working…")
+        }
+    }
+
+    private var subtitle: String {
+        if isWorking { return meta.working }
+        if isError { return "Failed" }
+        guard let payload else { return "Completed" }
+        if payload.plainText != nil { return "Failed" }
+        switch toolName {
+        case "reading_search":
+            if payload.items.isEmpty { return "No items found" }
+            return payload.items.count == 1 ? "1 item" : "\(payload.items.count) items"
+        case "reading_get":
+            return payload.items.first?.title ?? "Completed"
+        case "reading_summarize":
+            return payload.items.isEmpty ? "Completed" : "Summary ready"
+        default:
+            return "\(payload.mutationSucceeded) of \(payload.mutationTotal) succeeded"
+        }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if isWorking, let query = part.input?.objectValue?["query"]?.stringValue, !query.isEmpty {
+                Label(query, systemImage: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let payload {
+                if let plainText = payload.plainText {
+                    Text(plainText)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else {
+                    switch toolName {
+                    case "reading_search":
+                        searchList(payload.items)
+                    case "reading_get", "reading_summarize":
+                        if let item = payload.items.first {
+                            itemDetail(item)
+                        }
+                    default:
+                        mutationList(payload)
+                    }
+                }
+            }
+            if isError, let errorText = part.errorText {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    // MARK: - Search
+
+    @ViewBuilder
+    private func searchList(_ items: [ReadingToolPayload.Item]) -> some View {
+        if items.isEmpty {
+            Text("No reading items found")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        ForEach(items.prefix(Self.rowLimit)) { item in
+            itemRow(item)
+        }
+        if items.count > Self.rowLimit {
+            Text("+\(items.count - Self.rowLimit) more")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func itemRow(_ item: ReadingToolPayload.Item) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(item.status?.dotColor ?? .gray)
+                .frame(width: 7, height: 7)
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(2)
+                if let preview = item.summary ?? item.description {
+                    Text(preview)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                metaLine(item)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: - Item detail
+
+    private func itemDetail(_ item: ReadingToolPayload.Item) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(item.status?.dotColor ?? .gray)
+                    .frame(width: 7, height: 7)
+                Text(item.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(2)
+            }
+            metaLine(item)
+            if let description = item.description, item.summary == nil {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            if let summary = item.summary {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("Summary", systemImage: "sparkles")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(item.keyPoints, id: \.self) { point in
+                        HStack(alignment: .top, spacing: 6) {
+                            Text("•")
+                                .foregroundStyle(.tertiary)
+                            Text(point)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .font(.caption)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+    }
+
+    private func metaLine(_ item: ReadingToolPayload.Item) -> some View {
+        HStack(spacing: 6) {
+            if let host = item.host {
+                Label(host, systemImage: "link")
+            }
+            if let status = item.status {
+                Text(status.label)
+            }
+            if !item.tags.isEmpty {
+                Text(item.tags.map { "#\($0)" }.joined(separator: " "))
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+        .lineLimit(1)
+    }
+
+    // MARK: - Mutations
+
+    private func mutationList(_ payload: ReadingToolPayload) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(payload.mutationItems.prefix(Self.rowLimit)) { item in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: item.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(item.ok ? .green : .red)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title ?? "Item \(item.index + 1)")
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                        if let error = item.error {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if payload.mutationItems.count > Self.rowLimit {
+                Text("+\(payload.mutationItems.count - Self.rowLimit) more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+}
+
+private extension ReadingStatus {
+    var dotColor: Color {
+        switch self {
+        case .unread: Color(hex: "#3b82f6")
+        case .read: Color(hex: "#22c55e")
+        case .archived: Color(hex: "#64748b")
         }
     }
 }
