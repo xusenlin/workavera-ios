@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App 不做任何跨 App/网站的追踪，也不接入广告或分析 SDK。 -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!--
+	  数据收集声明：
+	  Workavera 是自托管客户端，账号、内容等数据只发送到「用户自己部署的服务器」，
+	  开发者本身不收集、不接收任何数据，因此这里保持为空数组。
+	  如果你后续接入了自己运营的后端、崩溃统计或分析服务，请在此按 Apple 的
+	  NSPrivacyCollectedDataType 规范补充对应条目（例如邮箱、姓名等账号信息）。
+	-->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<!--
+	  Required Reason API 声明：
+	  本 App 使用 UserDefaults 存储服务器地址、主题、上次登录邮箱等偏好，
+	  仅供本 App 自身读写，理由代码为 CA92.1。
+	-->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

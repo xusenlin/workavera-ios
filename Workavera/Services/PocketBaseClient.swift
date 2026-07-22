@@ -185,6 +185,20 @@ struct PocketBaseClient {
         )
     }
 
+    /// Soft-deletes the account by setting the `deactivated` flag. A hard
+    /// delete would cascade to all of the user's projects, tasks, docs, events
+    /// and chat history (and orphan shared team data), so the server models
+    /// account removal as deactivation and invalidates existing sessions.
+    func deactivateAccount(id: String, token: String) async throws {
+        struct Body: Encodable { let deactivated: Bool }
+        let _: User = try await sendJSON(
+            path: "/api/collections/users/records/\(id)",
+            method: "PATCH",
+            body: Body(deactivated: true),
+            token: token
+        )
+    }
+
     func getPreferences(ownerID: String, token: String) async throws -> UserPreferences {
         let response: RecordListResponse<UserPreferences> = try await send(
             path: "/api/collections/user_preferences/records",

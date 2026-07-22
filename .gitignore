@@ -29,3 +29,7 @@ fastlane/test_output
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# App Store submission working notes (internal drafts, not for the public repo).
+# The privacy policy stays tracked at docs/PrivacyPolicy.md — it must be public.
+docs/appstore/

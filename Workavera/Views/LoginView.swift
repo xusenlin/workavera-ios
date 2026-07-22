@@ -14,36 +14,47 @@ struct LoginView: View {
             Color(.systemGroupedBackground)
                 .ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 28) {
-                    header
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(spacing: 28) {
+                        header
 
-                    credentialCard
+                        credentialCard
 
-                    if let errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.circle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 4)
+                        if let errorMessage {
+                            Label(errorMessage, systemImage: "exclamationmark.circle.fill")
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 4)
+                        }
+
+                        loginButton
+
+                        Button {
+                            showServerSettings = true
+                        } label: {
+                            Label(serverDisplayName, systemImage: "server.rack")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 4)
+
+                        Link(destination: AppLinks.privacyPolicy) {
+                            Text("Privacy Policy")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .underline()
+                        }
                     }
-
-                    loginButton
-
-                    Button {
-                        showServerSettings = true
-                    } label: {
-                        Label(serverDisplayName, systemImage: "server.rack")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, 4)
+                    .padding(24)
+                    .frame(maxWidth: 440)
+                    // Center the form vertically within the viewport, while still
+                    // allowing it to scroll if the keyboard shrinks the space.
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
                 }
-                .padding(24)
-                .frame(maxWidth: 440)
-                .frame(maxWidth: .infinity)
+                .scrollDismissesKeyboard(.interactively)
             }
-            .scrollDismissesKeyboard(.interactively)
         }
         .onAppear {
             if email.isEmpty {
@@ -71,7 +82,6 @@ struct LoginView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.top, 56)
     }
 
     private var credentialCard: some View {

@@ -4,6 +4,8 @@ struct SettingsView: View {
     @Environment(AuthStore.self) private var auth
     @State private var errorMessage: String?
     @State private var confirmSignOut = false
+    @State private var confirmDeleteAccount = false
+    @State private var isDeletingAccount = false
 
     var body: some View {
         Form {
@@ -90,7 +92,7 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
             }
 
-            Section("Account") {
+            Section {
                 LabeledContent {
                     Text(auth.user?.email ?? "")
                 } label: {
@@ -102,6 +104,23 @@ struct SettingsView: View {
                     Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         .foregroundStyle(.red)
                 }
+                Button(role: .destructive) {
+                    confirmDeleteAccount = true
+                } label: {
+                    HStack {
+                        Label("Delete Account", systemImage: "trash")
+                            .foregroundStyle(.red)
+                        if isDeletingAccount {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isDeletingAccount)
+            } header: {
+                Text("Account")
+            } footer: {
+                Text("Deletes your account and signs you out on every device. You won't be able to sign back in, and this can't be undone from the app.")
             }
 
             Section("About") {
@@ -110,7 +129,17 @@ struct SettingsView: View {
                 } label: {
                     Label("Version", systemImage: "info.circle")
                 }
-                Link(destination: URL(string: "https://github.com/xusenlin/workavera")!) {
+                Link(destination: AppLinks.privacyPolicy) {
+                    HStack {
+                        Label("Privacy Policy", systemImage: "hand.raised")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                Link(destination: AppLinks.repository) {
                     HStack {
                         Label("GitHub", systemImage: "link")
                             .foregroundStyle(.primary)
@@ -139,6 +168,31 @@ struct SettingsView: View {
             }
         } message: {
             Text("Your session will be removed from this device.")
+        }
+        .alert(
+            "Delete your account?",
+            isPresented: $confirmDeleteAccount
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Account", role: .destructive) {
+                deleteAccount()
+            }
+        } message: {
+            Text("Your account will be deleted and you'll be signed out on every device. You won't be able to sign back in, and this can't be undone from the app.")
+        }
+    }
+
+    private func deleteAccount() {
+        isDeletingAccount = true
+        Task {
+            do {
+                try await auth.deleteAccount()
+                // On success the store transitions to the logged-out phase and
+                // this view is torn down, so no further UI work is needed here.
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isDeletingAccount = false
         }
     }
 
