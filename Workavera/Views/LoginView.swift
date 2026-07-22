@@ -147,7 +147,9 @@ struct LoginView: View {
     }
 
     private var serverDisplayName: String {
-        auth.serverAddress
+        let trimmed = auth.serverAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = trimmed.isEmpty ? ServerSettingsSheet.addressPlaceholder : trimmed
+        return address
             .replacingOccurrences(of: "https://", with: "")
             .replacingOccurrences(of: "http://", with: "")
     }

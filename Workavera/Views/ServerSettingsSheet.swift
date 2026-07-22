@@ -1,6 +1,10 @@
 import SwiftUI
 
 struct ServerSettingsSheet: View {
+    /// Shared example used as the server-address placeholder here and as the
+    /// fallback hint on the login screen, so both surfaces show the same thing.
+    static let addressPlaceholder = "https://workavera.example.com"
+
     @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
@@ -12,22 +16,25 @@ struct ServerSettingsSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("https://workavera.example.com", text: $address)
+                    TextField(Self.addressPlaceholder, text: $address)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 } header: {
                     Text("Server Address")
                 } footer: {
-                    Text("Use HTTPS for remote and production servers. A path is supported when Workavera is hosted below a reverse-proxy prefix.")
+                    Text("Use HTTPS for any remote or production server. If Workavera runs behind a reverse proxy, include its path prefix.\n\nWorkavera is open source — you can self-host the server from github.com/xusenlin/workavera.")
                 }
 
-                if usesHTTP && !isLoopbackAddress {
+                if usesHTTP {
                     Section {
                         Toggle("Allow Insecure HTTP", isOn: $allowInsecureHTTP)
+                            .disabled(isLoopbackAddress)
                     } footer: {
                         Label(
-                            "Passwords and session tokens can be read by other devices on the network when HTTP is used.",
+                            isLoopbackAddress
+                                ? "HTTP is unencrypted. It is allowed here only because this is a local loopback address that never leaves the device."
+                                : "HTTP is unencrypted. Anyone on the same network can read your password and session token. Only allow it for a server you trust on a private network.",
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .foregroundStyle(.orange)

@@ -58,7 +58,10 @@ final class AuthStore {
         self.tokenStore = tokenStore
         self.session = session
         self.responseCache = responseCache
-        serverAddress = defaults.string(forKey: Self.serverKey) ?? "http://127.0.0.1:8090"
+        // No baked-in default: a fresh install shows the example placeholder and
+        // waits for the user to enter their own server. A saved address (once the
+        // user has entered one) always takes precedence.
+        serverAddress = defaults.string(forKey: Self.serverKey) ?? ""
         allowInsecureHTTP = defaults.bool(forKey: Self.insecureHTTPKey)
         lastLoginEmail = defaults.string(forKey: Self.lastEmailKey) ?? ""
         let appearance = defaults.string(forKey: AppAppearance.storageKey) ?? AppAppearance.system.rawValue
