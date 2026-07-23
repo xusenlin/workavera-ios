@@ -736,6 +736,9 @@ private struct EventDetailSheet: View {
                             .background(event.color.color.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
                         Text(event.title)
                             .font(.title3.bold())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .allowsTightening(true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
