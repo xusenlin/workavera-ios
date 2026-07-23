@@ -20,6 +20,15 @@ final class AuthStoreTests: XCTestCase {
         super.tearDown()
     }
 
+    func testFreshInstallUsesHTTPSDemoServerByDefault() {
+        defaults.removeObject(forKey: "workavera.serverAddress")
+
+        let store = makeStore()
+
+        XCTAssertEqual(store.serverAddress, "https://demo.workavera.com")
+        XCTAssertFalse(store.allowInsecureHTTP)
+    }
+
     func testTransportFailureKeepsTokenForRetry() async {
         MockURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
         let store = makeStore()

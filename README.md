@@ -47,7 +47,7 @@ Workavera/
    cd ~/Git/Github/workavera && ./workavera serve
    ```
 2. 用 Xcode 16+ 打开 `Workavera.xcodeproj`，选 iOS 17+ 模拟器运行。
-3. 登录页用你的 Workavera 账号登录（模拟器访问 `127.0.0.1` 即宿主机）。真机调试时优先配置 HTTPS；临时使用 Mac 局域网 HTTP 地址时，需要在「服务器设置」中明确开启不安全 HTTP，并用 `--http=0.0.0.0:8090` 启动后端。
+3. 首次安装默认连接 `https://demo.workavera.com`。也可以在登录页的「服务器设置」中改为自己的 Workavera 服务后再登录（模拟器访问 `127.0.0.1` 即宿主机）。真机调试时优先配置 HTTPS；临时使用 Mac 局域网 HTTP 地址时，需要明确开启不安全 HTTP，并用 `--http=0.0.0.0:8090` 启动后端。
 
 登录成功后：侧边栏头部与 Dashboard、Profile 显示后端真实的头像、姓名、职位、简介与在线状态。Profile 支持编辑资料、上传头像和修改密码；Settings 中的主题与记忆开关由 `user_preferences` 持久化。退出登录前会要求二次确认。
 

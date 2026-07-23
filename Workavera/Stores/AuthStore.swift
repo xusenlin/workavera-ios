@@ -40,6 +40,7 @@ final class AuthStore {
     private let responseCache: APIResponseCache
     private var latestStatusRequestID: UUID?
     private var latestPreferencesRequestID: UUID?
+    private var avatarRevision: String?
 
     private static let serverKey = "workavera.serverAddress"
     private static let insecureHTTPKey = "workavera.allowInsecureHTTP"
@@ -58,10 +59,9 @@ final class AuthStore {
         self.tokenStore = tokenStore
         self.session = session
         self.responseCache = responseCache
-        // No baked-in default: a fresh install shows the example placeholder and
-        // waits for the user to enter their own server. A saved address (once the
-        // user has entered one) always takes precedence.
-        serverAddress = defaults.string(forKey: Self.serverKey) ?? ""
+        // A saved self-hosted address always takes precedence over the public demo.
+        serverAddress = defaults.string(forKey: Self.serverKey)
+            ?? ServerConfiguration.defaultAddress
         allowInsecureHTTP = defaults.bool(forKey: Self.insecureHTTPKey)
         lastLoginEmail = defaults.string(forKey: Self.lastEmailKey) ?? ""
         let appearance = defaults.string(forKey: AppAppearance.storageKey) ?? AppAppearance.system.rawValue
@@ -82,11 +82,17 @@ final class AuthStore {
 
     var avatarURL: URL? {
         guard let user, let client = try? makeClient() else { return nil }
-        return client.fileURL(
+        guard let url = client.fileURL(
             collectionId: user.collectionId,
             recordId: user.id,
             fileName: user.avatar
-        )
+        ) else {
+            return nil
+        }
+        guard let avatarRevision else { return url }
+        return url.appending(queryItems: [
+            URLQueryItem(name: "revision", value: avatarRevision)
+        ])
     }
 
     /// Builds a PocketBase file URL, e.g. for contact avatars referenced by
@@ -181,12 +187,16 @@ final class AuthStore {
 
     func updateProfile(_ profile: ProfileUpdate, avatar: AvatarUpload?) async throws {
         guard let user, let token else { return }
+        let didUpdateAvatar = avatar != nil
         self.user = try await makeClient().updateProfile(
             id: user.id,
             profile: profile,
             avatar: avatar,
             token: token
         )
+        if didUpdateAvatar {
+            avatarRevision = UUID().uuidString
+        }
     }
 
     func changePassword(currentPassword: String, newPassword: String) async throws {
@@ -828,6 +838,7 @@ final class AuthStore {
     private func clearSession() {
         token = nil
         user = nil
+        avatarRevision = nil
         preferences = nil
         preferencesMessage = nil
         latestStatusRequestID = nil

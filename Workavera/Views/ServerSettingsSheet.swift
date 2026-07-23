@@ -3,7 +3,7 @@ import SwiftUI
 struct ServerSettingsSheet: View {
     /// Shared example used as the server-address placeholder here and as the
     /// fallback hint on the login screen, so both surfaces show the same thing.
-    static let addressPlaceholder = "https://workavera.example.com"
+    static let addressPlaceholder = ServerConfiguration.defaultAddress
 
     @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss

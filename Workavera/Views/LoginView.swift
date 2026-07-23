@@ -148,10 +148,7 @@ struct LoginView: View {
 
     private var serverDisplayName: String {
         let trimmed = auth.serverAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        let address = trimmed.isEmpty ? ServerSettingsSheet.addressPlaceholder : trimmed
-        return address
-            .replacingOccurrences(of: "https://", with: "")
-            .replacingOccurrences(of: "http://", with: "")
+        return trimmed.isEmpty ? ServerSettingsSheet.addressPlaceholder : trimmed
     }
 
     private func submit() async {

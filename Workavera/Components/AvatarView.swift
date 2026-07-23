@@ -1,36 +1,36 @@
+import Foundation
 import SwiftUI
+import UIKit
 import WebKit
 
 /// 圆形头像：优先加载后端真实头像，加载中或无头像时显示姓名首字符。
-/// Workavera 的预置头像是 DiceBear 生成的 SVG，UIImage 无法解码，
-/// 因此 .svg 文件走 WKWebView 渲染，其余格式走 AsyncImage。
+/// 所有页面共享内存与磁盘缓存；DiceBear SVG 从缓存数据交给 WKWebView 渲染。
 struct AvatarView: View {
     let url: URL?
     let name: String
     var size: CGFloat = 40
 
+    @State private var image: UIImage?
+    @State private var svgData: Data?
+
     var body: some View {
         Group {
-            if let url, url.path.lowercased().hasSuffix(".svg") {
-                SVGImageView(url: url)
+            if let url, let svgData {
+                SVGImageView(data: svgData, baseURL: url)
                     .background(Color(.tertiarySystemFill))
-            } else if let url {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        initialsView
-                    }
-                }
+            } else if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
             } else {
                 initialsView
             }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        .task(id: url) {
+            await loadAvatar()
+        }
     }
 
     private var initialsView: some View {
@@ -48,11 +48,29 @@ struct AvatarView: View {
         guard let first = trimmed.first else { return "?" }
         return String(first).uppercased()
     }
+
+    private func loadAvatar() async {
+        image = nil
+        svgData = nil
+        guard let url,
+              let data = await AvatarResourceCache.shared.data(for: url),
+              !Task.isCancelled
+        else {
+            return
+        }
+
+        if url.path.lowercased().hasSuffix(".svg") {
+            svgData = data
+        } else {
+            image = UIImage(data: data)
+        }
+    }
 }
 
-/// 用 WKWebView 渲染 SVG 图片，透明背景、禁用交互与滚动。
+/// 用 WKWebView 渲染已经缓存的 SVG 数据，透明背景、禁用交互与滚动。
 private struct SVGImageView: UIViewRepresentable {
-    let url: URL
+    let data: Data
+    let baseURL: URL
 
     final class Coordinator {
         var loadedURL: URL?
@@ -73,17 +91,96 @@ private struct SVGImageView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        guard context.coordinator.loadedURL != url else { return }
-        context.coordinator.loadedURL = url
+        guard context.coordinator.loadedURL != baseURL else { return }
+        context.coordinator.loadedURL = baseURL
 
+        let encodedSVG = data.base64EncodedString()
         let html = """
         <html>
         <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
         <body style="margin:0;background:transparent;">
-        <img src="\(url.absoluteString)" style="width:100vw;height:100vh;object-fit:cover;display:block;">
+        <img src="data:image/svg+xml;base64,\(encodedSVG)" style="width:100vw;height:100vh;object-fit:cover;display:block;">
         </body>
         </html>
         """
-        webView.loadHTMLString(html, baseURL: nil)
+        webView.loadHTMLString(html, baseURL: baseURL.deletingLastPathComponent())
+    }
+}
+
+/// Shared avatar bytes cache. URLCache provides persistence between launches,
+/// while NSCache avoids repeated disk reads during a session.
+private actor AvatarResourceCache {
+    static let shared = AvatarResourceCache()
+
+    private let memoryCache: NSCache<NSURL, NSData>
+    private let diskCache: URLCache
+    private var inFlight: [URL: Task<CachedURLResponse?, Never>] = [:]
+
+    private init() {
+        let memoryCache = NSCache<NSURL, NSData>()
+        memoryCache.totalCostLimit = 32 * 1024 * 1024
+        self.memoryCache = memoryCache
+        diskCache = URLCache(
+            memoryCapacity: 32 * 1024 * 1024,
+            diskCapacity: 128 * 1024 * 1024,
+            diskPath: "workavera-avatars"
+        )
+    }
+
+    func data(for url: URL) async -> Data? {
+        if let cached = memoryCache.object(forKey: url as NSURL) {
+            return cached as Data
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .returnCacheDataElseLoad
+        request.timeoutInterval = 30
+
+        if let cached = diskCache.cachedResponse(for: request) {
+            storeInMemory(cached.data, for: url)
+            return cached.data
+        }
+
+        if let existing = inFlight[url] {
+            return await finish(existing, for: url, request: request)?.data
+        }
+
+        let download = Task<CachedURLResponse?, Never> {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let httpResponse = response as? HTTPURLResponse,
+                   !(200..<300).contains(httpResponse.statusCode) {
+                    return nil
+                }
+                return CachedURLResponse(
+                    response: response,
+                    data: data,
+                    storagePolicy: .allowed
+                )
+            } catch {
+                return nil
+            }
+        }
+        inFlight[url] = download
+        return await finish(download, for: url, request: request)?.data
+    }
+
+    private func finish(
+        _ task: Task<CachedURLResponse?, Never>,
+        for url: URL,
+        request: URLRequest
+    ) async -> CachedURLResponse? {
+        let response = await task.value
+        inFlight[url] = nil
+
+        if let response {
+            storeInMemory(response.data, for: url)
+            diskCache.storeCachedResponse(response, for: request)
+        }
+        return response
+    }
+
+    private func storeInMemory(_ data: Data, for url: URL) {
+        memoryCache.setObject(data as NSData, forKey: url as NSURL, cost: data.count)
     }
 }

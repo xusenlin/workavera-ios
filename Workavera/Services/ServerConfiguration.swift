@@ -27,6 +27,8 @@ enum ServerConfigurationError: LocalizedError, Equatable {
 }
 
 struct ServerConfiguration: Equatable {
+    static let defaultAddress = "https://demo.workavera.com"
+
     let baseURL: URL
     let normalizedAddress: String
     let usesInsecureHTTP: Bool

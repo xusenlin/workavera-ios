@@ -6,6 +6,7 @@ struct ProfileView: View {
     @Environment(AuthStore.self) private var auth
     @State private var showEditProfile = false
     @State private var showChangePassword = false
+    @State private var showAvatarPreview = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -21,7 +22,14 @@ struct ProfileView: View {
 
             Section {
                 VStack(spacing: 12) {
-                    AvatarView(url: auth.avatarURL, name: auth.user?.displayName ?? "?", size: 96)
+                    Button {
+                        showAvatarPreview = true
+                    } label: {
+                        AvatarView(
+                            url: auth.avatarURL,
+                            name: auth.user?.displayName ?? "?",
+                            size: 96
+                        )
                         .overlay(alignment: .bottomTrailing) {
                             Circle()
                                 .fill((auth.user?.status ?? .offline).color)
@@ -32,6 +40,11 @@ struct ProfileView: View {
                                 .offset(x: -2, y: -2)
                         }
                         .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(auth.avatarURL == nil)
+                    .accessibilityLabel("View profile photo")
+                    .accessibilityHint("Opens the profile photo at a larger size")
 
                     VStack(spacing: 4) {
                         Text(auth.user?.displayName ?? "")
@@ -98,6 +111,12 @@ struct ProfileView: View {
         .sheet(isPresented: $showChangePassword) {
             ChangePasswordSheet()
         }
+        .fullScreenCover(isPresented: $showAvatarPreview) {
+            AvatarPreviewSheet(
+                url: auth.avatarURL,
+                name: auth.user?.displayName ?? "?"
+            )
+        }
     }
 
     private var statusBinding: Binding<UserStatus> {
@@ -117,6 +136,52 @@ struct ProfileView: View {
 
 }
 
+private struct AvatarPreviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let url: URL?
+    let name: String
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color.black
+                    .ignoresSafeArea()
+
+                AvatarView(
+                    url: url,
+                    name: name,
+                    size: min(proxy.size.width - 40, proxy.size.height - 180, 440)
+                )
+                .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .accessibilityLabel("Close")
+                    }
+                    Spacer()
+                }
+                .padding()
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                dismiss()
+            }
+        }
+        .statusBarHidden()
+    }
+}
+
 private struct EditProfileSheet: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss
@@ -127,6 +192,7 @@ private struct EditProfileSheet: View {
     @State private var bio = ""
     @State private var status: UserStatus = .offline
     @State private var photoItem: PhotosPickerItem?
+    @State private var cropCandidate: CropCandidate?
     @State private var avatarImage: UIImage?
     @State private var avatarUpload: AvatarUpload?
     @State private var isSaving = false
@@ -205,6 +271,17 @@ private struct EditProfileSheet: View {
             .onChange(of: photoItem) {
                 Task { await prepareSelectedPhoto() }
             }
+            .fullScreenCover(item: $cropCandidate) { candidate in
+                AvatarCropperView(
+                    image: candidate.image,
+                    onCancel: {
+                        photoItem = nil
+                    },
+                    onCrop: { croppedImage in
+                        applyCroppedPhoto(croppedImage)
+                    }
+                )
+            }
         }
     }
 
@@ -218,25 +295,36 @@ private struct EditProfileSheet: View {
     }
 
     private func prepareSelectedPhoto() async {
-        guard let photoItem else { return }
+        guard let selectedItem = photoItem else { return }
         do {
-            guard let data = try await photoItem.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data),
-                  let jpeg = Self.preparedJPEG(from: image)
+            guard let data = try await selectedItem.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data)
             else {
                 throw ProfileImageError.couldNotRead
             }
-            guard jpeg.count <= 500 * 1024 else {
-                throw ProfileImageError.tooLarge
-            }
-            avatarImage = UIImage(data: jpeg)
-            avatarUpload = AvatarUpload(data: jpeg, fileName: "avatar.jpg", mimeType: "image/jpeg")
+            cropCandidate = CropCandidate(image: image)
             errorMessage = nil
         } catch {
-            avatarImage = nil
-            avatarUpload = nil
+            photoItem = nil
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func applyCroppedPhoto(_ image: UIImage) {
+        photoItem = nil
+
+        guard let jpeg = Self.preparedJPEG(from: image) else {
+            errorMessage = ProfileImageError.couldNotRead.localizedDescription
+            return
+        }
+        guard jpeg.count <= 500 * 1024 else {
+            errorMessage = ProfileImageError.tooLarge.localizedDescription
+            return
+        }
+
+        avatarImage = UIImage(data: jpeg)
+        avatarUpload = AvatarUpload(data: jpeg, fileName: "avatar.jpg", mimeType: "image/jpeg")
+        errorMessage = nil
     }
 
     private func save() async {
@@ -264,7 +352,9 @@ private struct EditProfileSheet: View {
         let maxDimension: CGFloat = 1024
         let scale = min(1, maxDimension / max(image.size.width, image.size.height))
         let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let resized = renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: size))
         }
@@ -275,6 +365,11 @@ private struct EditProfileSheet: View {
         }
         return resized.jpegData(compressionQuality: 0.2)
     }
+}
+
+private struct CropCandidate: Identifiable {
+    let id = UUID()
+    let image: UIImage
 }
 
 private enum ProfileImageError: LocalizedError {
