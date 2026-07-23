@@ -73,25 +73,39 @@ struct DashboardView: View {
     }
 
     private var greetingCard: some View {
-        HStack(spacing: 16) {
-            AvatarView(url: auth.avatarURL, name: auth.user?.displayName ?? "?", size: 56)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(greetingText)
-                    .font(.title3.bold())
-                HStack(spacing: 8) {
-                    StatusBadge(status: auth.user?.status ?? .offline)
-                    if let title = auth.user?.title {
-                        Text("·")
-                            .foregroundStyle(.tertiary)
-                        Text(title)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+        NavigationLink {
+            ProfileView()
+        } label: {
+            HStack(spacing: 16) {
+                AvatarView(url: auth.avatarURL, name: auth.user?.displayName ?? "?", size: 56)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(greetingText)
+                        .font(.title3.bold())
+                        .foregroundStyle(.primary)
+                    HStack(spacing: 8) {
+                        StatusBadge(status: auth.user?.status ?? .offline)
+                        if let title = auth.user?.title {
+                            Text("·")
+                                .foregroundStyle(.tertiary)
+                            Text(title)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 24)
             }
-            Spacer()
+            .padding(20)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
-        .padding(20)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open profile")
+        .accessibilityHint("Shows your personal profile")
         .background(
             Color(.secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
