@@ -736,6 +736,7 @@ private struct EventDetailSheet: View {
                             .background(event.color.color.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
                         Text(event.title)
                             .font(.title3.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     VStack(spacing: 0) {
