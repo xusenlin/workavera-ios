@@ -1,6 +1,6 @@
 import Foundation
 
-/// 用户在线状态，与 Workavera 后端 users 集合的 status 字段一致。
+/// User presence values matching the status field in the Workavera users collection.
 enum UserStatus: String, Codable, CaseIterable, Identifiable {
     case online
     case away
@@ -19,7 +19,7 @@ enum UserStatus: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// PocketBase users 集合记录。
+/// A record from the PocketBase users collection.
 struct User: Decodable, Identifiable, Equatable {
     let id: String
     let collectionId: String
@@ -47,7 +47,7 @@ struct User: Decodable, Identifiable, Equatable {
         phone = Self.nonEmpty(try container.decodeIfPresent(String.self, forKey: .phone))
         title = Self.nonEmpty(try container.decodeIfPresent(String.self, forKey: .title))
         bio = Self.nonEmpty(try container.decodeIfPresent(String.self, forKey: .bio))
-        // PocketBase 的空 select 字段返回 ""，直接按 UserStatus 解码会失败
+        // PocketBase returns "" for an empty select field, which cannot decode directly as UserStatus.
         let rawStatus = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
         status = UserStatus(rawValue: rawStatus)
         created = try container.decodeIfPresent(String.self, forKey: .created)

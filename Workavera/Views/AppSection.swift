@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// App 的全部模块，分组与顺序和 Workavera Web 版侧边栏保持一致：
-/// Overview（Dashboard）/ Workflow（Reading…Calendar）/ System（Settings），
-/// Notifications 在顶栏铃铛，Profile 通过用户卡片进入。
+/// All app modules, grouped and ordered to match the Workavera web sidebar:
+/// Overview (Dashboard), Workflow (Reading through Calendar), and System (Settings).
+/// Notifications lives in the top bar, and Profile opens from the user card.
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
     case dashboard
     case reading
@@ -36,7 +36,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// 线条风格图标，对应 Web 版 Hugeicons 的选型。
+    /// Line-style SF Symbols corresponding to the web app's Hugeicons choices.
     var icon: String {
         switch self {
         case .dashboard: "house"
@@ -52,7 +52,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// 占位页描述文字，与 Web 版导航描述保持一致。
+    /// Module descriptions aligned with the web navigation copy.
     var placeholderDescription: String {
         switch self {
         case .dashboard:

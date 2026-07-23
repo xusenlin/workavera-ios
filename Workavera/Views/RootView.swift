@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 登录后的主界面：侧边栏（iPhone 上为列表导航）+ 各模块详情。
+/// The signed-in interface: a sidebar (compact list navigation on iPhone) and module details.
 struct RootView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(NotificationStore.self) private var notifications

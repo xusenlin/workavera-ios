@@ -196,7 +196,7 @@ struct SettingsView: View {
         }
     }
 
-    /// 从 Bundle 读取版本号，与工程配置 MARKETING_VERSION 保持单一来源。
+    /// Reads the version from the bundle so MARKETING_VERSION remains the single source of truth.
     private var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         return "v\(version)"

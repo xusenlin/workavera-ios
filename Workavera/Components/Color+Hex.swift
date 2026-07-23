@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 从十六进制字符串（如 "#3b82f6"）创建颜色，用于后端返回的标签 / 状态颜色。
+/// Creates a color from a hex string such as "#3b82f6" for server-provided label and status colors.
 extension Color {
     init(hex: String) {
         var value = hex.trimmingCharacters(in: .whitespacesAndNewlines)

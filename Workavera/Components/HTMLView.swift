@@ -1,8 +1,8 @@
 import SwiftUI
 import WebKit
 
-/// 只读 HTML 渲染视图：支持 JavaScript 和文档内锚点，自适应内容高度，
-/// 配合外层 ScrollView 滚动（自身不滚动）。外部链接仍被拦截。
+/// A read-only HTML renderer with JavaScript, in-document anchors, and dynamic height.
+/// The surrounding ScrollView owns vertical scrolling, and external links are blocked.
 struct HTMLView: UIViewRepresentable {
     let html: String
     @Binding var contentHeight: CGFloat
@@ -42,7 +42,7 @@ struct HTMLView: UIViewRepresentable {
         webView.loadHTMLString(Self.wrapped(html), baseURL: nil)
     }
 
-    /// 包一层基础样式：系统字体、跟随深浅色、撑满宽度。
+    /// Wraps the document in base styles for system fonts, color scheme, and full width.
     private static func wrapped(_ html: String) -> String {
         """
         <html>
@@ -107,7 +107,7 @@ struct HTMLView: UIViewRepresentable {
             }
         }
 
-        /// 允许当前 HTML 内的 #anchor 跳转，阻止外部页面替换预览内容。
+        /// Allows #anchor navigation within the current document and blocks external pages.
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,

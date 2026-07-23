@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 工作概览：统计口径与 Web 仪表盘保持一致。
+/// Work overview using the same summary definitions as the web dashboard.
 struct DashboardView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(NotificationStore.self) private var notifications

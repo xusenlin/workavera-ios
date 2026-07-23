@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 看板页面（移动端布局）：顶部为当前项目卡片（点按切换项目），
-/// 其下为状态 chips 切换 + 全宽任务卡片列表，拖拽移动以详情页内切换状态代替。
+/// Mobile board layout: the current project card at the top opens project selection,
+/// followed by status chips and full-width task cards. Task details replace drag-and-drop status changes.
 struct BoardView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(BoardStore.self) private var board
@@ -105,7 +105,7 @@ struct BoardView: View {
         }
     }
 
-    // MARK: - 当前项目卡片（点按弹出项目切换卡片列表）
+    // MARK: - Current project card (opens the project selection sheet)
 
     private func projectHeader(_ project: BoardProject) -> some View {
         Button {
@@ -121,7 +121,7 @@ struct BoardView: View {
         .padding(.horizontal, 20)
     }
 
-    // MARK: - 状态切换
+    // MARK: - Status selection
 
     private func statePicker(_ project: BoardProject) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -145,7 +145,7 @@ struct BoardView: View {
         }
     }
 
-    // MARK: - 任务列表
+    // MARK: - Task list
 
     @ViewBuilder
     private var taskList: some View {
@@ -180,7 +180,7 @@ struct BoardView: View {
 
 }
 
-// MARK: - 项目切换（卡片列表 sheet）
+// MARK: - Project selection (card-list sheet)
 
 private struct ProjectSwitcherSheet: View {
     let projects: [BoardProject]
@@ -254,7 +254,7 @@ private struct ProjectSwitcherSheet: View {
     }
 }
 
-// MARK: - 项目卡片（页头与切换列表共用）
+// MARK: - Project card (shared by the header and selection list)
 
 private struct ProjectCard<Accessory: View>: View {
     let project: BoardProject
@@ -325,7 +325,7 @@ private struct ProjectCard<Accessory: View>: View {
     }
 }
 
-// MARK: - 任务详情（查看信息 + 切换状态）
+// MARK: - Task details (information and status changes)
 
 private struct TaskDetailSheet: View {
     let task: BoardTask
@@ -548,7 +548,7 @@ private struct TaskDetailSheet: View {
         .disabled(isUpdatingPriority)
     }
 
-    /// 状态行：菜单选择目标状态，代替移动端的拖拽移动。
+    /// Status row with a destination-state menu replacing drag-and-drop on mobile.
     private var stateRow: some View {
         Menu {
             ForEach(states) { state in
@@ -608,7 +608,7 @@ private struct TaskDetailSheet: View {
     }
 }
 
-// MARK: - 任务卡片
+// MARK: - Task card
 
 private struct TaskCard: View {
     let task: BoardTask
@@ -682,7 +682,7 @@ private struct TaskCard: View {
     }
 }
 
-// MARK: - 通用小组件
+// MARK: - Shared components
 
 private struct LabelChip: View {
     let label: BoardLabel
@@ -697,7 +697,7 @@ private struct LabelChip: View {
     }
 }
 
-/// 重叠头像组，最多展示 max 个，超出部分以 +N 表示。
+/// An overlapping avatar group showing at most max items, with +N for the remainder.
 private struct MemberStack: View {
     let members: [BoardMember]
     var size: CGFloat = 24

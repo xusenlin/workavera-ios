@@ -3,8 +3,8 @@ import SwiftUI
 import UIKit
 import WebKit
 
-/// 圆形头像：优先加载后端真实头像，加载中或无头像时显示姓名首字符。
-/// 所有页面共享内存与磁盘缓存；DiceBear SVG 从缓存数据交给 WKWebView 渲染。
+/// A circular avatar that prefers the server image and falls back to the user's initial.
+/// All screens share memory and disk caches; cached DiceBear SVG data is rendered by WKWebView.
 struct AvatarView: View {
     let url: URL?
     let name: String
@@ -67,7 +67,7 @@ struct AvatarView: View {
     }
 }
 
-/// 用 WKWebView 渲染已经缓存的 SVG 数据，透明背景、禁用交互与滚动。
+/// Renders cached SVG data in a transparent WKWebView with interaction and scrolling disabled.
 private struct SVGImageView: UIViewRepresentable {
     let data: Data
     let baseURL: URL

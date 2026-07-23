@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 通用分页栏：两侧圆形翻页按钮 + 中间胶囊圆点指示器，圆点可点击跳页。
-/// 默认只有多页时渲染；需要稳定布局的页面可设置 alwaysVisible。
+/// A reusable pagination bar with circular navigation buttons and tappable page indicators.
+/// It appears only for multiple pages by default; set alwaysVisible for stable layouts.
 struct PaginationBar: View {
     let pageCount: Int
     @Binding var page: Int
@@ -33,7 +33,7 @@ struct PaginationBar: View {
                     page += 1
                 }
             }
-            // 页数变化（如刷新后数据量改变）时收敛当前页
+            // Clamp the current page when a refresh changes the number of pages.
             .onChange(of: pageCount) {
                 page = min(page, pageCount - 1)
             }
