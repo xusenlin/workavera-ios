@@ -163,6 +163,36 @@ final class AuthStore {
         phase = .loggedOut
     }
 
+    /// Refreshes the authenticated user record and rotates the session token.
+    ///
+    /// Unlike session restoration, this keeps already-loaded preferences intact
+    /// so a profile refresh does not briefly reset app-wide settings.
+    func refreshProfile() async throws {
+        guard let currentUser = user, let currentToken = token else {
+            throw sessionUnavailableError
+        }
+
+        do {
+            let auth = try await makeClient().authRefresh(token: currentToken)
+
+            // Ignore a response belonging to a session that changed while the
+            // request was in flight (for example, after logout and another login).
+            guard user?.id == currentUser.id, token == currentToken else { return }
+
+            try tokenStore.save(auth.token, account: tokenAccount)
+            user = auth.record
+            token = auth.token
+            avatarRevision = UUID().uuidString
+        } catch let error as APIError where error.isAuthenticationFailure {
+            guard user?.id == currentUser.id, token == currentToken else { throw error }
+            try? tokenStore.delete(account: tokenAccount)
+            try? tokenStore.delete(account: Self.legacyTokenAccount)
+            clearSession()
+            phase = .loggedOut
+            throw error
+        }
+    }
+
     func updateStatus(_ status: UserStatus) async throws {
         guard let user, let token else { return }
         let requestID = UUID()

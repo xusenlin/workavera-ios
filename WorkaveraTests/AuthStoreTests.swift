@@ -56,6 +56,85 @@ final class AuthStoreTests: XCTestCase {
         XCTAssertNil(store.token)
     }
 
+    func testProfileRefreshUpdatesUserAndRotatesToken() async throws {
+        var refreshed = false
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/api/collections/users/auth-refresh":
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "saved-token")
+                refreshed = true
+                let body = Data(#"{"token":"rotated-token","record":{"id":"user-1","collectionId":"_pb_users_auth_","email":"person@example.com","name":"Updated Person","avatar":"avatar.jpg","phone":"123","title":"Lead","bio":"Updated bio","status":"away","created":"2026-01-02 03:04:05.000Z","updated":"2026-07-24 03:04:05.000Z"}}"#.utf8)
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    body
+                )
+            default:
+                throw URLError(.badURL)
+            }
+        }
+        let store = makeStore()
+
+        await store.restoreSession()
+        XCTAssertTrue(refreshed)
+        XCTAssertEqual(store.user?.displayName, "Updated Person")
+
+        refreshed = false
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/collections/users/auth-refresh")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "rotated-token")
+            refreshed = true
+            let body = Data(#"{"token":"newest-token","record":{"id":"user-1","collectionId":"_pb_users_auth_","email":"person@example.com","name":"Newest Person","avatar":"avatar.jpg","phone":"456","title":"Director","bio":"Newest bio","status":"busy","created":"2026-01-02 03:04:05.000Z","updated":"2026-07-24 04:05:06.000Z"}}"#.utf8)
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+
+        try await store.refreshProfile()
+
+        XCTAssertTrue(refreshed)
+        XCTAssertEqual(store.user?.displayName, "Newest Person")
+        XCTAssertEqual(store.user?.phone, "456")
+        XCTAssertEqual(store.user?.status, .busy)
+        XCTAssertEqual(store.token, "newest-token")
+        XCTAssertEqual(tokenStore.value, "newest-token")
+        XCTAssertEqual(store.phase, .loggedIn)
+    }
+
+    func testUnauthorizedProfileRefreshLogsOut() async {
+        let authBody = Data(#"{"token":"fresh-token","record":{"id":"user-1","collectionId":"_pb_users_auth_","email":"person@example.com","name":"Person","avatar":"","status":"online"}}"#.utf8)
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/api/collections/users/auth-refresh":
+                return (
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    authBody
+                )
+            default:
+                throw URLError(.badURL)
+            }
+        }
+        let store = makeStore()
+        await store.restoreSession()
+
+        MockURLProtocol.handler = { request in
+            (
+                HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"message":"The request requires valid authentication."}"#.utf8)
+            )
+        }
+
+        do {
+            try await store.refreshProfile()
+            XCTFail("Expected profile refresh to fail")
+        } catch {
+            XCTAssertEqual(store.phase, .loggedOut)
+            XCTAssertNil(store.user)
+            XCTAssertNil(store.token)
+            XCTAssertNil(tokenStore.value)
+        }
+    }
+
     func testReloadPreferencesRecoversFromInitialTransportFailure() async throws {
         var preferenceAttempts = 0
         MockURLProtocol.handler = { request in
