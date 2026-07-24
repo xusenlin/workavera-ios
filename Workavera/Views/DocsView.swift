@@ -593,6 +593,8 @@ private struct MarkdownDocumentView: View {
                 .padding(.vertical, 50)
         } else {
             Markdown(content)
+                .workspaceMarkdownCodeStyle()
+                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
