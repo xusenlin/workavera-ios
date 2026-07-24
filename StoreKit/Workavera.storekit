@@ -1,0 +1,119 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "E1FA50CF",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "19.99",
+      "familyShareable" : false,
+      "internalID" : "1000000001",
+      "localizations" : [
+        {
+          "description" : "A one-time purchase that supports continued open-source development and unlocks the supporter badge.",
+          "displayName" : "Lifetime Supporter",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "一次性购买，支持项目持续开源开发，并解锁支持者徽章。",
+          "displayName" : "永久支持者",
+          "locale" : "zh_Hans"
+        }
+      ],
+      "productID" : "com.xusenlin.workavera.ios.supporter.lifetime",
+      "referenceName" : "Lifetime Supporter",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "1000000002",
+      "localizations" : [
+        {
+          "description" : "A small optional tip to support Workavera development.",
+          "displayName" : "Coffee",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "自愿请开发者喝杯咖啡，支持 Workavera 持续开发。",
+          "displayName" : "请喝杯咖啡",
+          "locale" : "zh_Hans"
+        }
+      ],
+      "productID" : "com.xusenlin.workavera.ios.tip.coffee",
+      "referenceName" : "Coffee Tip",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : false,
+      "internalID" : "1000000003",
+      "localizations" : [
+        {
+          "description" : "An optional tip to support ongoing Workavera development.",
+          "displayName" : "Generous Tip",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "自愿支持 Workavera 的持续开发与维护。",
+          "displayName" : "慷慨支持",
+          "locale" : "zh_Hans"
+        }
+      ],
+      "productID" : "com.xusenlin.workavera.ios.tip.generous",
+      "referenceName" : "Generous Tip",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "1000000004",
+      "localizations" : [
+        {
+          "description" : "An optional contribution for sponsoring the Workavera project.",
+          "displayName" : "Project Sponsor",
+          "locale" : "en_US"
+        },
+        {
+          "description" : "自愿赞助 Workavera 开源项目的持续发展。",
+          "displayName" : "项目赞助",
+          "locale" : "zh_Hans"
+        }
+      ],
+      "productID" : "com.xusenlin.workavera.ios.tip.sponsor",
+      "referenceName" : "Project Sponsor Tip",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingGracePeriodEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "zh_Hans",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 5,
+    "minor" : 0
+  }
+}

@@ -2,7 +2,10 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(SupportStore.self) private var support
     @State private var errorMessage: String?
+    @State private var supportAlertTitle = "Support Workavera"
+    @State private var supportMessage: String?
     @State private var confirmSignOut = false
     @State private var confirmDeleteAccount = false
     @State private var isDeletingAccount = false
@@ -152,6 +155,8 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            supportSection
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
@@ -180,6 +185,133 @@ struct SettingsView: View {
         } message: {
             Text("Your account will be deleted and you'll be signed out on every device. You won't be able to sign back in, and this can't be undone from the app.")
         }
+        .alert(
+            supportAlertTitle,
+            isPresented: Binding(
+                get: { supportMessage != nil },
+                set: { if !$0 { supportMessage = nil } }
+            )
+        ) {
+            Button("OK") {
+                supportMessage = nil
+            }
+        } message: {
+            Text(supportMessage ?? "")
+        }
+    }
+
+    private var supportSection: some View {
+        Section {
+            HStack(spacing: 14) {
+                AvatarView(
+                    url: auth.avatarURL,
+                    name: auth.user?.displayName ?? "?",
+                    size: 54
+                )
+                .overlay(alignment: .topLeading) {
+                    SupporterAvatarBadge(size: 20)
+                        .offset(x: -3, y: -3)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(
+                        support.isLifetimeSupporter
+                            ? "Thank you for your support"
+                            : "Supporter badge preview"
+                    )
+                    .font(.headline)
+
+                    Text(
+                        support.isLifetimeSupporter
+                            ? "Your supporter mark is active on this Apple Account."
+                            : "A one-time purchase supports continued open-source development."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 6)
+
+            if support.isLifetimeSupporter {
+                HStack(spacing: 10) {
+                    Label("Lifetime Supporter", systemImage: "heart.circle.fill")
+                        .foregroundStyle(.primary)
+
+                    Spacer(minLength: 12)
+
+                    Label("Active", systemImage: "checkmark.seal.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.green)
+                }
+            } else {
+                Button {
+                    purchase(.lifetimeSupporter)
+                } label: {
+                    HStack {
+                        Label("Become a Lifetime Supporter", systemImage: "heart.circle.fill")
+                        Spacer()
+                        if support.purchasingProductID == .lifetimeSupporter {
+                            ProgressView()
+                        } else {
+                            Text(
+                                support.product(for: .lifetimeSupporter)?.displayPrice
+                                    ?? "One-time"
+                            )
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .disabled(
+                    support.product(for: .lifetimeSupporter) == nil
+                        || support.purchasingProductID != nil
+                )
+            }
+
+            Menu {
+                ForEach(SupportProductID.tips) { productID in
+                    Button {
+                        purchase(productID)
+                    } label: {
+                        Label {
+                            if let price = support.product(for: productID)?.displayPrice {
+                                Text("\(productID.title) · \(price)")
+                            } else {
+                                Text(productID.title)
+                            }
+                        } icon: {
+                            Image(systemName: productID.systemImage)
+                        }
+                    }
+                    .disabled(support.product(for: productID) == nil)
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "cup.and.saucer")
+                        .font(.system(size: 15, weight: .regular))
+                        .frame(width: 22)
+                    Text("Leave a Tip")
+                    Spacer()
+                    if support.purchasingProductID.map(SupportProductID.tips.contains) == true {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .disabled(support.purchasingProductID != nil)
+
+            Button("Restore Purchases", systemImage: "arrow.clockwise") {
+                restorePurchases()
+            }
+            .disabled(support.purchasingProductID != nil)
+        } header: {
+            Text("Support Workavera")
+        } footer: {
+            Text("Tips are optional and do not unlock core features. Purchases are handled by the App Store and never pass through your Workavera server.")
+        }
     }
 
     private func deleteAccount() {
@@ -194,6 +326,60 @@ struct SettingsView: View {
             }
             isDeletingAccount = false
         }
+    }
+
+    private func purchase(_ productID: SupportProductID) {
+        Task {
+            do {
+                switch try await support.purchase(productID) {
+                case .purchased(.lifetimeSupporter):
+                    showSupportMessage(
+                        title: "Thank You for Supporting Workavera",
+                        message: "You're now a Lifetime Supporter. Your support helps Workavera stay open source and continue improving. A supporter badge has also been added to your avatar."
+                    )
+                case .purchased:
+                    showSupportMessage(
+                        title: "Thank You for Your Support",
+                        message: "Your tip directly supports the continued development and maintenance of Workavera. It truly means a lot."
+                    )
+                case .pending:
+                    showSupportMessage(
+                        title: "Purchase Pending",
+                        message: "The purchase is waiting for approval from the App Store. We'll update it automatically when it completes."
+                    )
+                case .cancelled:
+                    break
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func restorePurchases() {
+        Task {
+            do {
+                try await support.restorePurchases()
+                if support.isLifetimeSupporter {
+                    showSupportMessage(
+                        title: "Purchase Restored",
+                        message: "Welcome back, and thank you for supporting Workavera. Your Lifetime Supporter badge is active again."
+                    )
+                } else {
+                    showSupportMessage(
+                        title: "Nothing to Restore",
+                        message: "No Lifetime Supporter purchase was found for this Apple Account."
+                    )
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func showSupportMessage(title: String, message: String) {
+        supportAlertTitle = title
+        supportMessage = message
     }
 
     /// Reads the version from the bundle so MARKETING_VERSION remains the single source of truth.

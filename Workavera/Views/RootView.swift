@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(NotificationStore.self) private var notifications
+    @Environment(SupportStore.self) private var support
     @State private var selection: AppSection? = .dashboard
 
     var body: some View {
@@ -76,6 +77,12 @@ struct RootView: View {
         } label: {
             HStack(spacing: 12) {
                 AvatarView(url: auth.avatarURL, name: auth.user?.displayName ?? "?", size: 44)
+                    .overlay(alignment: .topLeading) {
+                        if support.isLifetimeSupporter {
+                            SupporterAvatarBadge(size: 17)
+                                .offset(x: -3, y: -3)
+                        }
+                    }
                     .overlay(alignment: .bottomTrailing) {
                         Circle()
                             .fill((auth.user?.status ?? .offline).color)

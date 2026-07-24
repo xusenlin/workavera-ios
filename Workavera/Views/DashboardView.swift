@@ -5,6 +5,7 @@ struct DashboardView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(NotificationStore.self) private var notifications
     @Environment(DashboardStore.self) private var dashboard
+    @Environment(SupportStore.self) private var support
     var onNavigate: ((AppSection) -> Void)? = nil
 
     private let columns = [
@@ -78,6 +79,12 @@ struct DashboardView: View {
         } label: {
             HStack(spacing: 16) {
                 AvatarView(url: auth.avatarURL, name: auth.user?.displayName ?? "?", size: 56)
+                    .overlay(alignment: .topLeading) {
+                        if support.isLifetimeSupporter {
+                            SupporterAvatarBadge(size: 20)
+                                .offset(x: -3, y: -3)
+                        }
+                    }
                 VStack(alignment: .leading, spacing: 5) {
                     Text(greetingText)
                         .font(.title3.bold())

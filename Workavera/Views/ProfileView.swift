@@ -4,6 +4,7 @@ import UIKit
 
 struct ProfileView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(SupportStore.self) private var support
     @State private var showEditProfile = false
     @State private var showChangePassword = false
     @State private var showAvatarPreview = false
@@ -30,6 +31,12 @@ struct ProfileView: View {
                             name: auth.user?.displayName ?? "?",
                             size: 96
                         )
+                        .overlay(alignment: .topLeading) {
+                            if support.isLifetimeSupporter {
+                                SupporterAvatarBadge(size: 27)
+                                    .offset(x: -1, y: -1)
+                            }
+                        }
                         .overlay(alignment: .bottomTrailing) {
                             Circle()
                                 .fill((auth.user?.status ?? .offline).color)
@@ -45,6 +52,7 @@ struct ProfileView: View {
                     .disabled(auth.avatarURL == nil)
                     .accessibilityLabel("View profile photo")
                     .accessibilityHint("Opens the profile photo at a larger size")
+                    .accessibilityValue(support.isLifetimeSupporter ? "Lifetime Supporter" : "")
 
                     VStack(spacing: 4) {
                         Text(auth.user?.displayName ?? "")

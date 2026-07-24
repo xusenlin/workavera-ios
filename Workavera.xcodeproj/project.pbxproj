@@ -23,6 +23,7 @@
 /* Begin PBXFileReference section */
 		AA00000000000000000000A4 /* Workavera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Workavera.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000C4 /* WorkaveraTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WorkaveraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA00000000000000000000F1 /* Workavera.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Workavera.storekit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -75,6 +76,7 @@
 			children = (
 				AA00000000000000000000A1 /* Workavera */,
 				AA00000000000000000000C1 /* WorkaveraTests */,
+				AA00000000000000000000F0 /* StoreKit */,
 				AA00000000000000000000A3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -86,6 +88,14 @@
 				AA00000000000000000000C4 /* WorkaveraTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000F0 /* StoreKit */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000F1 /* Workavera.storekit */,
+			);
+			path = StoreKit;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

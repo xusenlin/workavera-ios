@@ -14,6 +14,7 @@ struct WorkaveraApp: App {
     @State private var contacts = ContactsStore()
     @State private var reading = ReadingStore()
     @State private var chat = ChatStore()
+    @State private var support = SupportStore()
 
     var body: some Scene {
         WindowGroup {
@@ -42,7 +43,11 @@ struct WorkaveraApp: App {
             .environment(contacts)
             .environment(reading)
             .environment(chat)
+            .environment(support)
             .preferredColorScheme(auth.appearance.colorScheme)
+            .task {
+                await support.start()
+            }
         }
     }
 }
