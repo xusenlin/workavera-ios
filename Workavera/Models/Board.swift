@@ -76,6 +76,13 @@ struct BoardTask: Identifiable, Equatable {
         guard let dueDate else { return false }
         return dueDate < .now
     }
+
+    var copyText: String {
+        """
+        Task ID: \(id)
+        Task Name: \(title)
+        """
+    }
 }
 
 struct BoardProject: Identifiable, Equatable {

@@ -418,6 +418,14 @@ private struct TaskDetailSheet: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle(task.title)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    CopyInfoButton(
+                        text: task.copyText,
+                        accessibilityLabel: "Copy task ID and name"
+                    )
+                }
+            }
         }
         .presentationDetents([.medium, .large])
         .sheet(isPresented: $showDueDateEditor) {
@@ -683,6 +691,39 @@ private struct TaskCard: View {
 }
 
 // MARK: - Shared components
+
+private struct CopyInfoButton: View {
+    let text: String
+    let accessibilityLabel: String
+
+    @State private var copied = false
+
+    var body: some View {
+        Button(action: copy) {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(copied ? Color.green : Color.secondary)
+                .frame(width: 30, height: 30)
+                .background(.thinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(copied ? "Copied" : accessibilityLabel)
+        .accessibilityHint("Copies both fields to the clipboard")
+    }
+
+    private func copy() {
+        UIPasteboard.general.string = text
+        withAnimation(.easeInOut(duration: 0.15)) {
+            copied = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation(.easeInOut(duration: 0.15)) {
+                copied = false
+            }
+        }
+    }
+}
 
 private struct LabelChip: View {
     let label: BoardLabel
