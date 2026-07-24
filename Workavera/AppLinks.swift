@@ -6,7 +6,7 @@ import Foundation
 enum AppLinks {
     /// Public privacy policy. Rendered by GitHub; must stay reachable while the
     /// app is on the App Store. Also used as the App Store Connect privacy URL.
-    static let privacyPolicy = URL(string: "https://github.com/xusenlin/workavera-ios/blob/main/docs/PrivacyPolicy.md")!
+    static let privacyPolicy = URL(string: "https://github.com/xusenlin/workavera/blob/main/doc/privacy-policy.md")!
 
     /// Project home / support page.
     static let repository = URL(string: "https://github.com/xusenlin/workavera")!
