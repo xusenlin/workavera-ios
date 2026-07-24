@@ -21,6 +21,12 @@ struct LoginView: View {
 
                         credentialCard
 
+                        Text("No registration is offered in the app. Sign in with an account provided by your Workavera server administrator.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         if let errorMessage {
                             Label(errorMessage, systemImage: "exclamationmark.circle.fill")
                                 .font(.footnote)

@@ -464,6 +464,8 @@ private struct ChatConversationDetailView: View {
     @State private var showDelete = false
     @State private var draft = ""
     @State private var selectedModelID = ""
+    @State private var pendingAIConsent: PendingAIConsent?
+    @State private var showAIConsent = false
     /// Whether the user is at (or near) the bottom of the history; streaming
     /// only keeps scrolling to the end while this holds.
     @State private var isPinnedToBottom = true
@@ -478,6 +480,8 @@ private struct ChatConversationDetailView: View {
     /// in the lazy content's measured height re-pins the list to the end.
     @State private var initialScrollPending = false
     @FocusState private var composerFocused: Bool
+
+    private let aiConsentStore = AIConsentStore()
 
     private var conversation: ChatConversation? {
         store.conversations.first { $0.id == conversationID }
@@ -570,6 +574,31 @@ private struct ChatConversationDetailView: View {
             }
         } message: {
             Text("This permanently deletes the conversation and all of its messages.")
+        }
+        .alert(
+            "Allow AI Data Sharing?",
+            isPresented: $showAIConsent,
+            presenting: pendingAIConsent
+        ) { pending in
+            Button("Not Now", role: .cancel) {
+                pendingAIConsent = nil
+            }
+            Button("Allow and Send") {
+                aiConsentStore.authorize(
+                    userID: pending.userID,
+                    modelID: pending.modelID
+                )
+                send(pending.content, modelID: pending.modelID)
+                pendingAIConsent = nil
+            }
+        } message: { pending in
+            Text(
+                """
+                To generate a response, your message and relevant conversation or workspace content will be sent to this AI model:
+
+                \(pending.modelAddress)
+                """
+            )
         }
     }
 
@@ -736,13 +765,33 @@ private struct ChatConversationDetailView: View {
 
     private func submit() {
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty, !selectedModelID.isEmpty, !isGenerating else { return }
+        guard !content.isEmpty,
+              !selectedModelID.isEmpty,
+              !isGenerating,
+              let userID = auth.user?.id,
+              let model = modelStore.models.first(where: { $0.id == selectedModelID }) else { return }
+
+        if !aiConsentStore.isAuthorized(userID: userID, modelID: model.id) {
+            pendingAIConsent = PendingAIConsent(
+                content: content,
+                userID: userID,
+                modelID: model.id,
+                modelAddress: model.baseURL
+            )
+            showAIConsent = true
+            return
+        }
+
+        send(content, modelID: model.id)
+    }
+
+    private func send(_ content: String, modelID: String) {
         draft = ""
         Task {
             await store.sendMessage(
                 content,
                 conversationID: conversationID,
-                modelConfigID: selectedModelID,
+                modelConfigID: modelID,
                 using: auth
             )
         }
@@ -792,6 +841,13 @@ private struct ChatConversationDetailView: View {
             dismiss()
         }
     }
+}
+
+private struct PendingAIConsent {
+    let content: String
+    let userID: String
+    let modelID: String
+    let modelAddress: String
 }
 
 private struct ChatComposer: View {

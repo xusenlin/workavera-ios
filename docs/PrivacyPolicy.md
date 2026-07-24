@@ -1,6 +1,6 @@
 # Workavera Privacy Policy
 
-_Last updated: 2026-07-22_
+_Last updated: 2026-07-24_
 
 Workavera is a client app for **self-hosted Workavera servers**. You connect the
 app to a server that **you or your organization operate**. The app developer does
@@ -43,14 +43,21 @@ When you use Chat or AI summaries, your messages and the relevant content are se
 to **your** server, which then calls the large-language-model provider you have
 configured there. The app developer is not a party to those requests. Review your
 server configuration and your chosen model provider's terms to understand how that
-provider handles the data.
+provider handles the data. Before a user sends data to a model for the first time,
+the app displays that model's address and asks for permission. The permission is
+stored locally for that user and model configuration.
 
-## 5. Account deletion
+## 5. Account management and deletion
 
-You can delete your account from **Settings → Account → Delete Account**. This
-deactivates your account on the server and signs you out on every device. You will
-not be able to sign back in. Complete removal of the underlying data is performed
-by your server's administrator according to that server's policy.
+The app does not offer account registration and does not automatically create
+accounts. Accounts are provisioned and managed by the administrator of the
+self-hosted Workavera server you choose.
+
+The app developer cannot access or delete accounts or content on independently
+operated servers. To request deletion of your account and associated data, contact
+your Workavera server administrator. Deletion timing, backup retention, and any
+data that must be retained are determined by that server's policy and applicable
+law.
 
 ## 6. Children
 
@@ -72,7 +79,7 @@ https://github.com/xusenlin/workavera.
 
 # Workavera 隐私政策
 
-_最后更新：2026-07-22_
+_最后更新：2026-07-24_
 
 Workavera 是**自托管 Workavera 服务器**的客户端 App。你将 App 连接到**由你本人或
 你的组织运营**的服务器。App 开发者不运营任何中心化后端，也不会接收、存储或访问你的
@@ -105,12 +112,17 @@ SDK**，不会跨 App 或网站追踪你。
 
 使用聊天或 AI 摘要时，你的消息与相关内容会发送到**你自己的**服务器，再由该服务器调用你
 在其中配置的大语言模型服务商。App 开发者不参与这些请求。请查阅你的服务器配置及所选模型
-服务商的条款，以了解其数据处理方式。
+服务商的条款，以了解其数据处理方式。用户首次向某个模型发送数据前，App 会显示该模型地址
+并请求授权；授权记录按用户和模型配置保存在本机。
 
-## 5. 删除账号
+## 5. 账号管理与删除
 
-你可在 **设置 → 账号 → 删除账号** 中删除账号。此操作会在服务器上停用你的账号并在所有设备
-登出，且你将无法再次登录。底层数据的彻底清除由你的服务器管理员按该服务器的策略执行。
+App 不提供账号注册，也不会自动创建账号。账号由你所选择的自托管 Workavera 服务器管理员
+创建和管理。
+
+App 开发者无法访问或删除由他人独立运营的服务器上的账号或内容。如需删除账号及相关数据，
+请联系你的 Workavera 服务器管理员。删除所需时间、备份保留期限及依法必须保留的数据，由
+该服务器的政策和适用法律决定。
 
 ## 6. 儿童
 

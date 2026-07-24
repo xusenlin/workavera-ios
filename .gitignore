@@ -6,6 +6,9 @@ xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
 
+# JetBrains IDE user state
+.idea/
+
 # Build artifacts
 build/
 DerivedData/

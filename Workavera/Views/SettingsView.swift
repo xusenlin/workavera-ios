@@ -7,8 +7,6 @@ struct SettingsView: View {
     @State private var supportAlertTitle = "Support Workavera"
     @State private var supportMessage: String?
     @State private var confirmSignOut = false
-    @State private var confirmDeleteAccount = false
-    @State private var isDeletingAccount = false
 
     var body: some View {
         Form {
@@ -107,23 +105,10 @@ struct SettingsView: View {
                     Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         .foregroundStyle(.red)
                 }
-                Button(role: .destructive) {
-                    confirmDeleteAccount = true
-                } label: {
-                    HStack {
-                        Label("Delete Account", systemImage: "trash")
-                            .foregroundStyle(.red)
-                        if isDeletingAccount {
-                            Spacer()
-                            ProgressView()
-                        }
-                    }
-                }
-                .disabled(isDeletingAccount)
             } header: {
                 Text("Account")
             } footer: {
-                Text("Deletes your account and signs you out on every device. You won't be able to sign back in, and this can't be undone from the app.")
+                Text("Accounts are provisioned and managed by your Workavera server administrator.")
             }
 
             Section("About") {
@@ -173,17 +158,6 @@ struct SettingsView: View {
             }
         } message: {
             Text("Your session will be removed from this device.")
-        }
-        .alert(
-            "Delete your account?",
-            isPresented: $confirmDeleteAccount
-        ) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete Account", role: .destructive) {
-                deleteAccount()
-            }
-        } message: {
-            Text("Your account will be deleted and you'll be signed out on every device. You won't be able to sign back in, and this can't be undone from the app.")
         }
         .alert(
             supportAlertTitle,
@@ -311,20 +285,6 @@ struct SettingsView: View {
             Text("Support Workavera")
         } footer: {
             Text("Tips are optional and do not unlock core features. Purchases are handled by the App Store and never pass through your Workavera server.")
-        }
-    }
-
-    private func deleteAccount() {
-        isDeletingAccount = true
-        Task {
-            do {
-                try await auth.deleteAccount()
-                // On success the store transitions to the logged-out phase and
-                // this view is torn down, so no further UI work is needed here.
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isDeletingAccount = false
         }
     }
 

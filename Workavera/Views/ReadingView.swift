@@ -385,10 +385,15 @@ private struct AddReadingItemSheet: View {
 private struct ReadingDetailSheet: View {
     @Environment(AuthStore.self) private var auth
     @Environment(ReadingStore.self) private var store
+    @Environment(LLMSettingsStore.self) private var modelStore
     @Environment(\.openURL) private var openURL
 
     @State private var item: ReadingItem
     @State private var confirmSummarize = false
+    @State private var consentModel: LLMModelConfiguration?
+    @State private var showAIConsent = false
+
+    private let aiConsentStore = AIConsentStore()
 
     init(initialItem: ReadingItem) {
         _item = State(initialValue: initialItem)
@@ -454,7 +459,7 @@ private struct ReadingDetailSheet: View {
                     .buttonStyle(.borderedProminent)
 
                     Button {
-                        confirmSummarize = true
+                        requestSummary()
                     } label: {
                         Label(
                             item.summary.isEmpty ? "Fetch & Summarize" : "Regenerate Summary",
@@ -463,7 +468,11 @@ private struct ReadingDetailSheet: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(store.mutatingItemIDs.contains(item.id))
+                    .disabled(
+                        store.mutatingItemIDs.contains(item.id)
+                            || modelStore.isLoadingModels
+                            || defaultModel == nil
+                    )
                 }
                 .padding(20)
             }
@@ -518,8 +527,38 @@ private struct ReadingDetailSheet: View {
             } message: {
                 Text("The server will fetch the URL and overwrite any existing extracted content, summary, and key points.")
             }
+            .alert(
+                "Allow AI Data Sharing?",
+                isPresented: $showAIConsent,
+                presenting: consentModel
+            ) { model in
+                Button("Not Now", role: .cancel) {
+                    consentModel = nil
+                }
+                Button("Allow and Summarize") {
+                    guard let userID = auth.user?.id else { return }
+                    aiConsentStore.authorize(userID: userID, modelID: model.id)
+                    consentModel = nil
+                    summarize()
+                }
+            } message: { model in
+                Text(
+                    """
+                    To generate a summary, the article content will be sent to this AI model:
+
+                    \(model.baseURL)
+                    """
+                )
+            }
+            .task(id: auth.user?.id) {
+                await modelStore.loadModelsForPresentation(using: auth)
+            }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var defaultModel: LLMModelConfiguration? {
+        modelStore.models.first(where: \.isDefault) ?? modelStore.models.first
     }
 
     private func detailSection(title: String, text: String) -> some View {
@@ -535,6 +574,24 @@ private struct ReadingDetailSheet: View {
     private func updateStatus(_ status: ReadingStatus) {
         Task {
             if let updated = try? await store.updateStatus(item, status: status, using: auth) {
+                item = updated
+            }
+        }
+    }
+
+    private func requestSummary() {
+        guard let userID = auth.user?.id, let model = defaultModel else { return }
+        if aiConsentStore.isAuthorized(userID: userID, modelID: model.id) {
+            confirmSummarize = true
+        } else {
+            consentModel = model
+            showAIConsent = true
+        }
+    }
+
+    private func summarize() {
+        Task {
+            if let updated = try? await store.summarize(item, using: auth) {
                 item = updated
             }
         }

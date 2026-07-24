@@ -163,15 +163,6 @@ final class AuthStore {
         phase = .loggedOut
     }
 
-    /// Deletes the signed-in user's account. The server soft-deletes it
-    /// (deactivation) to avoid cascade-wiping shared team data, invalidates the
-    /// session server-side, and we tear down the local session like `logout`.
-    func deleteAccount() async throws {
-        guard let user, let token else { throw sessionUnavailableError }
-        try await makeClient().deactivateAccount(id: user.id, token: token)
-        logout()
-    }
-
     func updateStatus(_ status: UserStatus) async throws {
         guard let user, let token else { return }
         let requestID = UUID()

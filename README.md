@@ -2,6 +2,10 @@
 
 The native iOS client for Workavera, a self-hosted AI workspace. Its modules and interaction patterns follow the Workavera web app.
 
+The app does not provide account registration or automatic account creation.
+Sign-in accounts are provisioned and managed by the administrator of each
+self-hosted Workavera server.
+
 ## Technology
 
 - **SwiftUI** and the **Observation** framework (`@Observable` / `@Environment`, iOS 17+)
@@ -51,7 +55,7 @@ Workavera/
 
 3. A fresh installation connects to `https://demo.workavera.com`. To use your own Workavera deployment, open **Server Settings** from the login screen before signing in. The iOS Simulator can reach a backend on the Mac through `127.0.0.1`. For a physical device, prefer HTTPS. To temporarily use a Mac over LAN HTTP, start the backend with `--http=0.0.0.0:8090` and explicitly enable insecure HTTP in Server Settings.
 
-After signing in, the sidebar, Dashboard, and Profile display the user's avatar, name, title, bio, and online status from the server. Profile supports profile editing, square avatar cropping, avatar upload, and password changes. Settings persists theme and memory preferences through `user_preferences` and confirms destructive account actions.
+After signing in, the sidebar, Dashboard, and Profile display the user's avatar, name, title, bio, and online status from the server. Profile supports profile editing, square avatar cropping, avatar upload, and password changes. Settings persists theme and memory preferences through `user_preferences` and provides local sign-out. Account lifecycle management is handled by the selected server's administrator.
 
 ## Testing
 
