@@ -242,7 +242,7 @@ final class PocketBaseClientTests: XCTestCase {
             XCTAssertEqual(components.queryItems?.first(where: { $0.name == "sort" })?.value, "-pinned,-created")
             XCTAssertEqual(
                 components.queryItems?.first(where: { $0.name == "filter" })?.value,
-                "status = \"active\""
+                "status = \"active\" && (title ~ \"Build \\\"26\\\"\" || body ~ \"Build \\\"26\\\"\")"
             )
             let body = Data(#"{"page":2,"perPage":20,"totalPages":3,"totalItems":41,"items":[{"id":"notice-1","recipient":"user-1","type":"task_due","title":"Task due","body":"Ship the build","data":{},"read_at":"","status":"active","pinned":true,"created":"2026-07-20 08:00:00.000Z","updated":"2026-07-20 08:01:00.000Z"}]}"#.utf8)
             return (
@@ -254,6 +254,7 @@ final class PocketBaseClientTests: XCTestCase {
         let page = try await makeClient().getNotifications(
             page: 2,
             pageSize: 20,
+            query: "  Build \"26\"  ",
             token: "token-value"
         )
 

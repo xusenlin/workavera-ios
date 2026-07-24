@@ -38,7 +38,6 @@ struct ContactsView: View {
                             }
                             .padding(.horizontal, 20)
                         }
-                        searchField
                         statusFilterPicker
 
                         if filtered.isEmpty {
@@ -58,20 +57,16 @@ struct ContactsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Contacts")
+        .searchable(
+            text: $query,
+            prompt: "Search name, email or title"
+        )
         .task(id: auth.user?.id) {
             await store.loadForPresentation(using: auth)
         }
         .sheet(item: $selection) { selection in
             ContactDetailSheet(contactID: selection.id)
         }
-    }
-
-    private var searchField: some View {
-        WorkspaceSearchField(
-            text: $query,
-            prompt: "Search name, email or title"
-        )
-        .padding(.horizontal, 20)
     }
 
     private var statusFilterPicker: some View {

@@ -6,6 +6,7 @@ import Observation
 final class NotificationStore {
     private(set) var items: [AppNotification] = []
     private(set) var unreadCount = 0
+    private(set) var query = ""
     private(set) var page = 0
     private(set) var totalPages = 1
     private(set) var totalItems = 0
@@ -23,6 +24,7 @@ final class NotificationStore {
         refreshSequence += 1
         items = []
         unreadCount = 0
+        query = ""
         page = 0
         totalPages = 1
         totalItems = 0
@@ -65,6 +67,7 @@ final class NotificationStore {
             async let pageRequest = auth.loadNotifications(
                 page: targetPage + 1,
                 pageSize: pageSize,
+                query: query,
                 strategy: strategy
             )
             async let countRequest = auth.loadUnreadNotificationCount(strategy: strategy)
@@ -92,6 +95,14 @@ final class NotificationStore {
 
     func loadPage(_ page: Int, using auth: AuthStore) async {
         await refresh(using: auth, page: min(max(0, page), totalPages - 1))
+    }
+
+    func search(_ newQuery: String, using auth: AuthStore) async {
+        let normalized = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query != normalized else { return }
+        query = normalized
+        page = 0
+        await refresh(using: auth, page: 0)
     }
 
     func listenForRealtimeEvents(using auth: AuthStore) async {

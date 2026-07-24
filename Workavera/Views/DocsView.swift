@@ -6,6 +6,7 @@ struct DocsView: View {
     @Environment(DocsStore.self) private var docs
     @State private var showLocationSwitcher = false
     @State private var deleteTarget: DocumentSummary?
+    @State private var searchInput = ""
 
     var body: some View {
         CachedContentView(
@@ -17,23 +18,21 @@ struct DocsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Docs")
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if docs.view.usesPagination {
-                VStack(spacing: 0) {
-                    Divider()
-                    PaginationBar(
-                        pageCount: docs.totalPages,
-                        page: pageBinding,
-                        alwaysVisible: true
-                    )
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                }
-                .background(Color(.systemGroupedBackground))
+        .searchable(
+            text: $searchInput,
+            prompt: "Search documents"
+        )
+        .onSubmit(of: .search) {
+            Task { await docs.search(searchInput, using: auth) }
+        }
+        .onChange(of: searchInput) { oldValue, newValue in
+            if !oldValue.isEmpty, newValue.isEmpty, !docs.query.isEmpty {
+                Task { await docs.search("", using: auth) }
             }
         }
         .task(id: auth.user?.id) {
             await docs.loadForPresentation(using: auth)
+            searchInput = docs.query
         }
         .sheet(isPresented: $showLocationSwitcher) {
             DocsLocationSwitcherSheet(
@@ -76,10 +75,17 @@ struct DocsView: View {
                     } description: {
                         Text("No documents match this location and search.")
                     } actions: {
-                        Button("Refresh") {
-                            Task { await docs.refresh(using: auth) }
+                        if docs.query.isEmpty {
+                            Button("Refresh") {
+                                Task { await docs.refresh(using: auth) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button("Clear Search") {
+                                clearSearch()
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                     .padding(.vertical, 36)
                 } else {
@@ -123,19 +129,26 @@ struct DocsView: View {
                         )
                     }
                 }
+
+                documentPagination
             }
             .padding(20)
-        }
-        .overlay {
-            if docs.isLoading {
-                ProgressView()
-                    .padding(14)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            }
         }
         .scrollBounceBehavior(.always)
         .refreshable {
             await docs.refresh(using: auth)
+        }
+    }
+
+    @ViewBuilder
+    private var documentPagination: some View {
+        if docs.view.usesPagination, docs.hasLoaded, docs.totalItems > 0 {
+            ListPaginationFooter(
+                pageCount: docs.totalPages,
+                page: pageBinding
+            )
+            .padding(.horizontal, 2)
+            .padding(.top, 2)
         }
     }
 
@@ -197,6 +210,11 @@ struct DocsView: View {
 
     private func select(_ filter: DocsViewFilter) {
         Task { await docs.selectView(filter, using: auth) }
+    }
+
+    private func clearSearch() {
+        searchInput = ""
+        Task { await docs.search("", using: auth) }
     }
 
     private func documentMenu(_ document: DocumentSummary) -> some View {
@@ -330,10 +348,9 @@ private struct DocsLocationSwitcherSheet: View {
                                 )
                             }
                             Divider()
-                            PaginationBar(
+                            ListPaginationFooter(
                                 pageCount: projectPageCount,
-                                page: $projectPage,
-                                alwaysVisible: true
+                                page: $projectPage
                             )
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)

@@ -424,11 +424,17 @@ final class AuthStore {
     func loadNotifications(
         page: Int,
         pageSize: Int,
+        query: String = "",
         strategy: DataLoadStrategy = .networkOnly
     ) async throws -> NotificationPage {
         guard let token else { throw sessionUnavailableError }
         return try await load(strategy: strategy) { client in
-            try await client.getNotifications(page: page, pageSize: pageSize, token: token)
+            try await client.getNotifications(
+                page: page,
+                pageSize: pageSize,
+                query: query,
+                token: token
+            )
         }
     }
 

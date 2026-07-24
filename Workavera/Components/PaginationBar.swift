@@ -53,3 +53,60 @@ struct PaginationBar: View {
         .disabled(disabled)
     }
 }
+
+/// Pagination controls for vertically scrolling, server-backed lists.
+/// Unlike `PaginationBar`, this presents explicit page context and belongs in
+/// the scroll content rather than in a fixed bottom bar.
+struct ListPaginationFooter: View {
+    let pageCount: Int
+    @Binding var page: Int
+
+    var body: some View {
+        if pageCount > 1 {
+            HStack {
+                pageButton(
+                    title: "Previous page",
+                    systemImage: "chevron.left",
+                    disabled: page <= 0
+                ) {
+                    page -= 1
+                }
+
+                Spacer()
+
+                Text("Page \(page + 1) of \(pageCount)")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                pageButton(
+                    title: "Next page",
+                    systemImage: "chevron.right",
+                    disabled: page >= pageCount - 1
+                ) {
+                    page += 1
+                }
+            }
+            .onChange(of: pageCount) {
+                page = min(page, max(0, pageCount - 1))
+            }
+        }
+    }
+
+    private func pageButton(
+        title: String,
+        systemImage: String,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(Color(.tertiarySystemFill), in: Circle())
+        }
+        .disabled(disabled)
+        .accessibilityLabel(title)
+    }
+}

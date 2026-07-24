@@ -7,7 +7,7 @@ final class DocsStore {
     static let pageSize = 15
     private static let selectionCachePrefix = "workavera.docs.selection:"
 
-    var query = ""
+    private(set) var query = ""
     private(set) var view: DocsViewFilter = .myDocuments
     private(set) var documents: [DocumentSummary] = []
     private(set) var folders: [DocumentFolder] = []
@@ -147,7 +147,10 @@ final class DocsStore {
         }
     }
 
-    func reloadSearch(using auth: AuthStore) async {
+    func search(_ newQuery: String, using auth: AuthStore) async {
+        let normalized = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query != normalized else { return }
+        query = normalized
         page = 0
         await refresh(using: auth, page: 0)
     }

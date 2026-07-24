@@ -102,7 +102,12 @@ struct ProfileView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Edit") { showEditProfile = true }
+                Button {
+                    showEditProfile = true
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .accessibilityLabel("Edit profile")
             }
         }
         .sheet(isPresented: $showEditProfile) {

@@ -23,10 +23,10 @@ struct ReadingView: View {
                             }
                             .padding(.horizontal, 20)
                         }
-                        searchField
                         filterPicker
                         summaryLine
                         itemList
+                        readingPagination
                     }
                     .padding(.vertical, 20)
                 }
@@ -34,6 +34,18 @@ struct ReadingView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Reading")
+        .searchable(
+            text: $searchInput,
+            prompt: "Search title, URL, tags or summary"
+        )
+        .onSubmit(of: .search) {
+            Task { await store.search(searchInput, using: auth) }
+        }
+        .onChange(of: searchInput) { oldValue, newValue in
+            if !oldValue.isEmpty, newValue.isEmpty, !store.query.isEmpty {
+                Task { await store.search("", using: auth) }
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if store.unreadCount > 0 {
@@ -78,31 +90,18 @@ struct ReadingView: View {
         } message: {
             Text(deleteMessage)
         }
-        .safeAreaInset(edge: .bottom) {
-            if store.hasLoaded {
-                VStack(spacing: 0) {
-                    Divider()
-                    PaginationBar(
-                        pageCount: store.totalPages,
-                        page: pageBinding,
-                        alwaysVisible: true
-                    )
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                }
-                .background(.bar)
-            }
-        }
     }
 
-    private var searchField: some View {
-        WorkspaceSearchField(
-            text: $searchInput,
-            prompt: "Search title, URL, tags or summary",
-            onSubmit: { Task { await store.search(searchInput, using: auth) } },
-            onClear: { Task { await store.search("", using: auth) } }
-        )
-        .padding(.horizontal, 20)
+    @ViewBuilder
+    private var readingPagination: some View {
+        if store.hasLoaded, store.totalItems > 0 {
+            ListPaginationFooter(
+                pageCount: store.totalPages,
+                page: pageBinding
+            )
+            .padding(.horizontal, 20)
+            .padding(.top, 2)
+        }
     }
 
     private var filterPicker: some View {

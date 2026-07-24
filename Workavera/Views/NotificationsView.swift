@@ -5,6 +5,7 @@ struct NotificationsView: View {
     @Environment(NotificationStore.self) private var notifications
     @State private var deleteTarget: AppNotification?
     @State private var showDeleteConfirmation = false
+    @State private var searchInput = ""
 
     var body: some View {
         CachedContentView(
@@ -16,6 +17,18 @@ struct NotificationsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Notifications")
+        .searchable(
+            text: $searchInput,
+            prompt: "Search notifications"
+        )
+        .onSubmit(of: .search) {
+            Task { await notifications.search(searchInput, using: auth) }
+        }
+        .onChange(of: searchInput) { oldValue, newValue in
+            if !oldValue.isEmpty, newValue.isEmpty, !notifications.query.isEmpty {
+                Task { await notifications.search("", using: auth) }
+            }
+        }
         .toolbar {
             if notifications.unreadCount > 0 {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -40,21 +53,9 @@ struct NotificationsView: View {
         } message: { _ in
             Text("This notification will be permanently deleted. This action cannot be undone.")
         }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 0) {
-                Divider()
-                PaginationBar(
-                    pageCount: notifications.totalPages,
-                    page: pageBinding,
-                    alwaysVisible: true
-                )
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-            }
-            .background(Color(.systemGroupedBackground))
-        }
         .task(id: auth.user?.id) {
             await notifications.loadAutomatically(using: auth)
+            searchInput = notifications.query
         }
     }
 
@@ -71,12 +72,19 @@ struct NotificationsView: View {
                     ContentUnavailableView {
                         Label("No Notifications", systemImage: "bell.slash")
                     } description: {
-                        Text("New task reminders, calendar events, and model shares will appear here.")
+                        Text(emptyDescription)
                     } actions: {
-                        Button("Refresh") {
-                            Task { await notifications.refresh(using: auth) }
+                        if notifications.query.isEmpty {
+                            Button("Refresh") {
+                                Task { await notifications.refresh(using: auth) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button("Clear Search") {
+                                clearSearch()
+                            }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 36)
@@ -87,6 +95,8 @@ struct NotificationsView: View {
                         }
                     }
                 }
+
+                notificationPagination
             }
             .padding(20)
         }
@@ -94,6 +104,30 @@ struct NotificationsView: View {
         .refreshable {
             await notifications.refresh(using: auth)
         }
+    }
+
+    private var emptyDescription: String {
+        if notifications.query.isEmpty {
+            return "New task reminders, calendar events, and model shares will appear here."
+        }
+        return "No notifications match “\(notifications.query)”."
+    }
+
+    @ViewBuilder
+    private var notificationPagination: some View {
+        if notifications.hasLoaded, notifications.totalItems > 0 {
+            ListPaginationFooter(
+                pageCount: notifications.totalPages,
+                page: pageBinding
+            )
+            .padding(.horizontal, 2)
+            .padding(.top, 2)
+        }
+    }
+
+    private func clearSearch() {
+        searchInput = ""
+        Task { await notifications.search("", using: auth) }
     }
 
     private func row(_ notification: AppNotification) -> some View {

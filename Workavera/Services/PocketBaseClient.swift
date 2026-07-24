@@ -588,7 +588,18 @@ struct PocketBaseClient {
         return response.updated
     }
 
-    func getNotifications(page: Int, pageSize: Int, token: String) async throws -> NotificationPage {
+    func getNotifications(
+        page: Int,
+        pageSize: Int,
+        query: String = "",
+        token: String
+    ) async throws -> NotificationPage {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let escapedQuery = Self.filterLiteral(normalizedQuery)
+        var filters = ["status = \"active\""]
+        if !escapedQuery.isEmpty {
+            filters.append("(title ~ \"\(escapedQuery)\" || body ~ \"\(escapedQuery)\")")
+        }
         let response: RecordListResponse<AppNotification> = try await send(
             path: "/api/collections/notifications/records",
             method: "GET",
@@ -596,7 +607,7 @@ struct PocketBaseClient {
                 URLQueryItem(name: "page", value: String(page)),
                 URLQueryItem(name: "perPage", value: String(pageSize)),
                 URLQueryItem(name: "sort", value: "-pinned,-created"),
-                URLQueryItem(name: "filter", value: "status = \"active\""),
+                URLQueryItem(name: "filter", value: filters.joined(separator: " && ")),
             ],
             token: token
         )

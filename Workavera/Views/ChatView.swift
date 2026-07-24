@@ -18,11 +18,28 @@ struct ChatView: View {
         Group {
             if horizontalSizeClass == .regular {
                 regularLayout
+                    .searchable(
+                        text: $searchInput,
+                        placement: .toolbar,
+                        prompt: "Search conversations"
+                    )
             } else {
                 conversationPane(usesNavigationLinks: true)
+                    .searchable(
+                        text: $searchInput,
+                        prompt: "Search conversations"
+                    )
             }
         }
         .background(Color(.systemGroupedBackground))
+        .onSubmit(of: .search) {
+            Task { await store.search(searchInput, using: auth) }
+        }
+        .onChange(of: searchInput) { oldValue, newValue in
+            if !oldValue.isEmpty, newValue.isEmpty, !store.query.isEmpty {
+                Task { await store.search("", using: auth) }
+            }
+        }
         .navigationDestination(item: $navigationConversationID) { id in
             ChatConversationDetailView(conversationID: id)
                 .onAppear { store.select(id) }
@@ -124,28 +141,13 @@ struct ChatView: View {
                         .padding(.horizontal, 12)
                     }
 
-                    chatSearchField
-
                     conversationList(usesNavigationLinks: usesNavigationLinks)
+
+                    conversationPagination
                 }
                 .padding(.vertical, 12)
             }
             .refreshable { await store.refresh(using: auth) }
-            .safeAreaInset(edge: .bottom) {
-                if store.hasLoaded, store.totalItems > 0 {
-                    VStack(spacing: 0) {
-                        Divider()
-                        PaginationBar(
-                            pageCount: store.totalPages,
-                            page: activePageBinding,
-                            alwaysVisible: true
-                        )
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                    }
-                    .background(.bar)
-                }
-            }
         }
     }
 
@@ -194,14 +196,16 @@ struct ChatView: View {
         }
     }
 
-    private var chatSearchField: some View {
-        WorkspaceSearchField(
-            text: $searchInput,
-            prompt: "Search conversations",
-            onSubmit: { Task { await store.search(searchInput, using: auth) } },
-            onClear: { Task { await store.search("", using: auth) } }
-        )
-        .padding(.horizontal, 12)
+    @ViewBuilder
+    private var conversationPagination: some View {
+        if store.hasLoaded, store.totalItems > 0 {
+            ListPaginationFooter(
+                pageCount: store.totalPages,
+                page: activePageBinding
+            )
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+        }
     }
 
     private func createConversation() {
