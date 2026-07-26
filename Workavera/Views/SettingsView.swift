@@ -127,6 +127,16 @@ struct SettingsView: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
+                Link(destination: AppLinks.support) {
+                    HStack {
+                        Label("Support", systemImage: "questionmark.circle")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
                 Link(destination: AppLinks.repository) {
                     HStack {
                         Label("GitHub", systemImage: "link")
