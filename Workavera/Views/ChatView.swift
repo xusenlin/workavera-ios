@@ -2919,7 +2919,9 @@ private struct ChatToolCard: View {
     let runActive: Bool
     let messageStatus: ChatMessageStatus?
 
-    @State private var expanded = false
+    /// nil until the user taps the card, so the derived value below can keep
+    /// following the approval state until then.
+    @State private var manualExpanded: Bool?
 
     private var approvalObject: [String: JSONValue]? { approvalData?.objectValue }
     private var approvalID: String? { approvalObject?["approvalId"]?.stringValue }
@@ -2930,8 +2932,23 @@ private struct ChatToolCard: View {
             && messageStatus != .cancelled
     }
 
+    /// The approve and reject buttons live in the collapsed region, so a card
+    /// that still needs a decision has to start expanded or the run silently
+    /// stalls with no visible way to act. Derived rather than a stored initial
+    /// value so a card that only becomes actionable later also expands.
+    private var needsAttention: Bool {
+        awaitingApproval || part.state == "approval-responded"
+    }
+
+    private var expansion: Binding<Bool> {
+        Binding(
+            get: { manualExpanded ?? needsAttention },
+            set: { manualExpanded = $0 }
+        )
+    }
+
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: expansion) {
             VStack(alignment: .leading, spacing: 10) {
                 if let summary = approvalObject?["summary"]?.stringValue {
                     Text(summary)
