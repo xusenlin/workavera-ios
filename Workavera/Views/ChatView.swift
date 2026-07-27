@@ -2966,6 +2966,9 @@ private struct ChatToolCard: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
+                if approvalObject != nil {
+                    approvalOutcome
+                }
                 if awaitingApproval, let approvalID {
                     HStack {
                         Spacer()
@@ -3053,6 +3056,67 @@ private struct ChatToolCard: View {
 
     private var confirmationLabel: String {
         approvalObject?["presentation"]?.objectValue?["confirmLabel"]?.stringValue ?? "Approve"
+    }
+
+    private func presentationText(_ key: String) -> String? {
+        approvalObject?["presentation"]?.objectValue?[key]?.stringValue
+    }
+
+    /// The tool's own result, when it reports one. Approval-gated tools answer
+    /// with `{ok, action, reason}`, which is how a denial and a business
+    /// failure are told apart from a plain success.
+    private var resultObject: [String: JSONValue]? { part.output?.objectValue }
+
+    private var isDenied: Bool {
+        if part.approval?.approved == false { return true }
+        return resultObject?["action"]?.stringValue == "denied"
+            || resultObject?["reason"]?.stringValue == "user_denied"
+    }
+
+    private var isBusinessFailure: Bool {
+        part.state == "output-available" && resultObject?["ok"]?.boolValue == false && !isDenied
+    }
+
+    private var isFailed: Bool { part.state == "output-error" || isBusinessFailure }
+
+    private var isCompleted: Bool {
+        part.state == "output-available" && !isDenied && !isBusinessFailure
+    }
+
+    /// Mirrors the web card: once a decision is made the card explains what
+    /// happened in the tool's own words, rather than leaving the user to read
+    /// the raw result JSON.
+    @ViewBuilder
+    private var approvalOutcome: some View {
+        if part.state == "approval-responded", part.approval?.approved == true,
+           !isCompleted, !isFailed {
+            Label(
+                presentationText("pendingMessage") ?? "Applying approved action…",
+                systemImage: "clock"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if isDenied {
+            Label(
+                presentationText("deniedMessage") ?? "Action cancelled.",
+                systemImage: "xmark.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if isCompleted {
+            Label(
+                presentationText("successMessage") ?? "Action completed.",
+                systemImage: "checkmark.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.green)
+        } else if isFailed, part.errorText == nil {
+            // An explicit errorText is already rendered above; this covers a
+            // tool that failed while reporting ok=false without one.
+            Text(presentationText("failureMessage") ?? "The approved action could not be completed.")
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
     }
 
     private var confirmationIsDestructive: Bool {
