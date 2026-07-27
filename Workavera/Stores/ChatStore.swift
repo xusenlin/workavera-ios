@@ -628,8 +628,18 @@ final class ChatStore {
                     // Throttle UI updates: coalesce bursts of tokens into at most
                     // one refresh per interval, but always render the first chunk
                     // immediately so the user sees the response start.
+                    //
+                    // An approval request is exempt. The server blocks on the
+                    // user's decision, so it is the last chunk to arrive until
+                    // they answer: throttling it away would leave the card
+                    // showing the previous state with no buttons, and no later
+                    // chunk would ever come to flush it. The data part carrying
+                    // the approval payload is exempt for the same reason — the
+                    // buttons need its approvalId.
                     let now = ContinuousClock.now
-                    if let lastFlush, now - lastFlush < Self.streamFlushInterval {
+                    if !chunk.requiresImmediateRender,
+                       let lastFlush,
+                       now - lastFlush < Self.streamFlushInterval {
                         continue
                     }
                     lastFlush = now

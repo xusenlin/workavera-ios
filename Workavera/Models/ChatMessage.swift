@@ -334,6 +334,14 @@ struct ChatStreamChunk: Decodable, Equatable, Sendable {
         case toolName, approvalID = "approvalId"
         case sourceID = "sourceId"
     }
+
+    /// Chunks that must reach the UI on arrival rather than waiting for the
+    /// stream's flush throttle. An approval request stops the run until the
+    /// user answers, so no later chunk would arrive to carry a skipped
+    /// refresh, and the approval payload arrives with it.
+    var requiresImmediateRender: Bool {
+        type == "tool-approval-request" || type.hasPrefix("data-")
+    }
 }
 
 struct ChatStreamReducer: Sendable {
