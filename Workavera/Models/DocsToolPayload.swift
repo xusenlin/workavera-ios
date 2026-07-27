@@ -44,6 +44,9 @@ struct DocsToolPayload: Equatable, Sendable {
 
     var documents: [Document] = []
     var folders: [Folder] = []
+    /// True when docs_ensure_folder created the folder rather than reusing an
+    /// existing one, so the card can say which happened.
+    var folderWasCreated = false
     var isCreation = false
     var changed: Bool?
     var matches: Int?
@@ -106,6 +109,16 @@ struct DocsToolPayload: Equatable, Sendable {
             guard let object = value.objectValue else { return nil }
             chunkContentLength = object["contentLength"]?.intValue
             chunkRevision = object["revision"]?.intValue
+        case "docs_ensure_folder":
+            // `{"folder":…, "created":…}`. Reuse the folder list so the card
+            // renders it the same way as docs_list_folders; the card is
+            // dispatched by the `docs_` prefix, so leaving this unparsed would
+            // show an empty card rather than fall through to the generic one.
+            guard let object = value.objectValue,
+                  let folderValue = object["folder"]?.objectValue,
+                  let id = folderValue["id"]?.stringValue else { return nil }
+            folders = [Folder(id: id, name: folderValue["name"]?.stringValue ?? "Untitled")]
+            folderWasCreated = object["created"]?.boolValue ?? false
         case "docs_list_folders":
             guard let items = value.arrayValue else { return nil }
             folders = items.compactMap { item in

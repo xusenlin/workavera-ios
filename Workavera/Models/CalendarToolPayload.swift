@@ -46,6 +46,14 @@ struct CalendarToolPayload: Equatable, Sendable {
     }
 
     var days: [Day] = []
+    /// Flat matches from `calendar_search_events`. Unlike schedule days these
+    /// are whole events rather than expanded occurrences, so each one carries
+    /// its own start date.
+    var matches: [Event] = []
+    var isSearch = false
+    /// False when the backend capped the result, so the card can say the list
+    /// is partial instead of letting it read as every match.
+    var searchComplete = true
     var mutationTotal = 0
     var mutationSucceeded = 0
     var mutationItems: [MutationItem] = []
@@ -57,6 +65,12 @@ struct CalendarToolPayload: Equatable, Sendable {
         case "calendar_get_schedule":
             guard let dayValues = value.objectValue?["days"]?.arrayValue else { return nil }
             days = dayValues.compactMap(Self.day)
+        case "calendar_search_events":
+            guard let object = value.objectValue,
+                  let eventValues = object["events"]?.arrayValue else { return nil }
+            isSearch = true
+            matches = eventValues.compactMap(Self.event)
+            searchComplete = object["complete"]?.boolValue ?? true
         case "calendar_create_event", "calendar_update_event":
             guard let object = value.objectValue else { return nil }
             if let results = object["results"]?.arrayValue {

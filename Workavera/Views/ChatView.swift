@@ -1594,6 +1594,7 @@ private struct DocsToolCard: View {
         case "docs_move": ("Move Documents", "folder", "Moving…")
         case "docs_replace": ("Replace Text", "text.magnifyingglass", "Replacing…")
         case "docs_write_chunk": ("Write Document", "square.and.pencil", "Writing…")
+        case "docs_ensure_folder": ("Document Folder", "folder.badge.plus", "Resolving…")
         case "docs_list_folders": ("Document Folders", "folder", "Loading…")
         default: ("Document Tool", "doc", "Working…")
         }
@@ -1624,6 +1625,9 @@ private struct DocsToolCard: View {
             if let length = payload.chunkContentLength { parts.append("Wrote \(length) characters") }
             if let revision = payload.chunkRevision { parts.append("R\(revision)") }
             return parts.isEmpty ? "Completed" : parts.joined(separator: " · ")
+        case "docs_ensure_folder":
+            let name = payload.folders.first?.name ?? "Folder"
+            return payload.folderWasCreated ? "Created \u{201C}\(name)\u{201D}" : "Using \u{201C}\(name)\u{201D}"
         case "docs_list_folders":
             let count = payload.folders.count
             return count == 1 ? "1 folder" : "\(count) folders"
@@ -1653,7 +1657,7 @@ private struct DocsToolCard: View {
                     moveResultsList(payload)
                 case "docs_write_chunk":
                     chunkDetail(payload)
-                case "docs_list_folders":
+                case "docs_ensure_folder", "docs_list_folders":
                     folderList(payload.folders)
                 default:
                     EmptyView()
@@ -2418,6 +2422,7 @@ private struct CalendarToolCard: View {
     private var meta: (label: String, icon: String, working: String) {
         switch toolName {
         case "calendar_get_schedule": ("Schedule", "calendar", "Loading…")
+        case "calendar_search_events": ("Event Search", "magnifyingglass", "Searching…")
         case "calendar_create_event": ("Create Events", "calendar.badge.plus", "Creating…")
         case "calendar_update_event": ("Update Events", "pencil", "Updating…")
         default: ("Calendar Tool", "calendar", "Working…")
@@ -2433,6 +2438,10 @@ private struct CalendarToolCard: View {
             if total == 0 { return "Nothing scheduled" }
             return total == 1 ? "1 item" : "\(total) items"
         }
+        if payload.isSearch {
+            if payload.matches.isEmpty { return "No matching events" }
+            return payload.matches.count == 1 ? "1 event" : "\(payload.matches.count) events"
+        }
         if payload.isBatchMutation {
             return "\(payload.mutationSucceeded) of \(payload.mutationTotal) succeeded"
         }
@@ -2445,6 +2454,8 @@ private struct CalendarToolCard: View {
             if let payload {
                 if toolName == "calendar_get_schedule" {
                     scheduleView(payload)
+                } else if payload.isSearch {
+                    searchView(payload)
                 } else {
                     mutationList(payload)
                 }
@@ -2491,6 +2502,35 @@ private struct CalendarToolCard: View {
         }
     }
 
+    // MARK: - Search
+
+    @ViewBuilder
+    private func searchView(_ payload: CalendarToolPayload) -> some View {
+        if payload.matches.isEmpty {
+            Text("No matching events")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(payload.matches.prefix(Self.dayRowLimit)) { event in
+                    eventRow(event, showDate: true)
+                }
+                if payload.matches.count > Self.dayRowLimit {
+                    Text("+\(payload.matches.count - Self.dayRowLimit) more events")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if !payload.searchComplete {
+                    // The backend caps matches, so say the list is partial
+                    // rather than let it read as every match.
+                    Text("Showing the first matches. Narrow the search to see the rest.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
     private func dayHeader(_ date: String) -> some View {
         HStack(spacing: 6) {
             Text(Self.dayFormatter.date(from: date).map {
@@ -2509,7 +2549,9 @@ private struct CalendarToolCard: View {
         }
     }
 
-    private func eventRow(_ event: CalendarToolPayload.Event) -> some View {
+    /// showDate is set for search results: those are a flat list rather than
+    /// rows grouped under a day header, so each row carries its own date.
+    private func eventRow(_ event: CalendarToolPayload.Event, showDate: Bool = false) -> some View {
         HStack(alignment: .top, spacing: 8) {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                 .fill(event.color?.color ?? Color.accentColor)
@@ -2527,6 +2569,13 @@ private struct CalendarToolCard: View {
                             .padding(.vertical, 1)
                             .background(Color(.tertiarySystemFill), in: Capsule())
                     }
+                }
+                if showDate, let start = event.start {
+                    let repeats = event.recurrence.map { $0 != .none } ?? false
+                    Text(start.formatted(.dateTime.month(.abbreviated).day().year())
+                        + (repeats ? " onwards" : ""))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 Text(event.allDay ? "All day" : timeRange(event))
                     .font(.caption2)
