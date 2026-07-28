@@ -441,15 +441,6 @@ private struct ChatConversationEmptyView: View {
     }
 }
 
-/// Tracks the message list's total height so the initial scroll-to-end can
-/// re-pin while lazy cells are still settling into their real heights.
-private struct ChatContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 private struct ChatConversationDetailView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(ChatStore.self) private var store
@@ -466,19 +457,6 @@ private struct ChatConversationDetailView: View {
     @State private var selectedModelID = ""
     @State private var pendingAIConsent: PendingAIConsent?
     @State private var showAIConsent = false
-    /// Whether the user is at (or near) the bottom of the history; streaming
-    /// only keeps scrolling to the end while this holds.
-    @State private var isPinnedToBottom = true
-    /// Guards the drag-to-dismiss-keyboard gesture so one drag dismisses at
-    /// most once.
-    @State private var dragDismissedKeyboard = false
-    /// Snapshot of `isPinnedToBottom` taken when the keyboard starts
-    /// animating; the bottom sentinel leaves the visible area during the
-    /// transition, so the live value cannot be trusted at Did*.
-    @State private var resumePinAfterKeyboard = false
-    /// While true (short window after the history first appears), any change
-    /// in the lazy content's measured height re-pins the list to the end.
-    @State private var initialScrollPending = false
     @FocusState private var composerFocused: Bool
 
     private let aiConsentStore = AIConsentStore()
@@ -489,6 +467,10 @@ private struct ChatConversationDetailView: View {
 
     private var messages: [ChatMessage] {
         store.messages(for: conversationID)
+    }
+
+    private var historyEntries: [ChatHistoryEntry] {
+        store.historyEntries(for: conversationID)
     }
 
     private var contextInfo: ChatContextInfo? {
@@ -615,141 +597,29 @@ private struct ChatConversationDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(messages) { message in
-                            ChatMessageView(
-                                message: message,
-                                conversationID: conversationID,
-                                runActive: message.metadata?.runID == store.activeRunIDs[conversationID]
+            ChatHistoryList(
+                entries: historyEntries,
+                conversationID: conversationID,
+                activeRunID: store.activeRunIDs[conversationID],
+                auth: auth,
+                store: store
+            )
+            .overlay(alignment: .top) {
+                if let error = store.messageErrorMessages[conversationID] {
+                    InlineErrorBanner(message: error) {
+                        Task {
+                            await store.loadMessages(
+                                for: conversationID,
+                                using: auth,
+                                force: true
                             )
-                            .id(message.id)
                         }
-
-                        if let error = store.messageErrorMessages[conversationID] {
-                            InlineErrorBanner(message: error) {
-                                Task {
-                                    await store.loadMessages(
-                                        for: conversationID,
-                                        using: auth,
-                                        force: true
-                                    )
-                                }
-                            }
-                        }
-
-                        // Bottom sentinel: its visibility tells whether the
-                        // user is near the end of the history. The height
-                        // doubles as the tolerance for what counts as "at
-                        // the bottom".
-                        Color.clear
-                            .frame(height: 48)
-                            .onAppear { isPinnedToBottom = true }
-                            .onDisappear { isPinnedToBottom = false }
                     }
-                    .frame(maxWidth: 760)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 20)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        GeometryReader { geometry in
-                            Color.clear
-                                .preference(key: ChatContentHeightKey.self, value: geometry.size.height)
-                        }
-                    )
-                }
-                // Re-pin to the end while the lazy stack's heights are still
-                // settling (cells render with real heights only after the
-                // first jump, so a single scrollTo can land mid-content).
-                .onPreferenceChange(ChatContentHeightKey.self) { _ in
-                    guard initialScrollPending, let lastID = messages.last?.id else { return }
-                    proxy.scrollTo(lastID, anchor: .bottom)
-                }
-                // The composer sits in a bottom safe-area inset, so the
-                // scroll view's frame never resizes — only its insets move
-                // with the keyboard, animated natively by the system.
-                // `.always` bounce keeps the list draggable even when the
-                // content fits the viewport, so keyboard dismissal works on
-                // short conversations too.
-                .scrollBounceBehavior(.always)
-                // System interactive dismissal is kept as progressive
-                // enhancement; `.textSelection` inside messages can swallow
-                // it, hence the explicit drag fallback below.
-                .scrollDismissesKeyboard(.interactively)
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 10)
-                        .onChanged { value in
-                            guard composerFocused,
-                                  !dragDismissedKeyboard,
-                                  value.translation.height > 32 else { return }
-                            dragDismissedKeyboard = true
-                            composerFocused = false
-                        }
-                        .onEnded { _ in
-                            dragDismissedKeyboard = false
-                        }
-                )
-                // If the user was pinned to the end, snap back once the
-                // keyboard animation settles — this keeps the last message
-                // visible and re-reveals the bottom sentinel so streaming
-                // follow survives. The pinned state is snapshotted at Will*
-                // because the sentinel leaves the visible area during the
-                // transition.
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                    resumePinAfterKeyboard = isPinnedToBottom
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                    resumePinAfterKeyboard = isPinnedToBottom
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
-                    snapToEndAfterKeyboard(proxy)
-                }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-                    snapToEndAfterKeyboard(proxy)
-                }
-                .onAppear {
-                    // Jump to the end immediately, then keep re-pinning via
-                    // ChatContentHeightKey for a short settle window: lazy
-                    // cells (cards, images) resolve their real heights only
-                    // after the first layout, which otherwise leaves the
-                    // list stranded mid-content on longer conversations.
-                    guard let lastID = messages.last?.id else { return }
-                    initialScrollPending = true
-                    proxy.scrollTo(lastID, anchor: .bottom)
-                    // The first scrollTo runs before the lazy stack has
-                    // instantiated the last cell, so land it again on the next
-                    // tick once that cell exists.
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(600))
-                        initialScrollPending = false
-                    }
-                }
-                .onChange(of: messageScrollSignature) { _, _ in
-                    guard isPinnedToBottom, let lastID = messages.last?.id else { return }
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
+                    .padding(.top, 8)
                 }
             }
         }
-    }
-
-    /// One precise, unanimated snap after the keyboard animation has fully
-    /// settled — no estimated mid-animation scrolling.
-    private func snapToEndAfterKeyboard(_ proxy: ScrollViewProxy) {
-        defer { resumePinAfterKeyboard = false }
-        guard resumePinAfterKeyboard, let lastID = messages.last?.id else { return }
-        proxy.scrollTo(lastID, anchor: .bottom)
-    }
-
-    private var messageScrollSignature: String {
-        let last = messages.last
-        let textLength = last?.parts.reduce(0) { $0 + ($1.text?.count ?? 0) } ?? 0
-        return "\(messages.count):\(last?.id ?? ""):\(last?.parts.count ?? 0):\(textLength)"
     }
 
     private func chooseInitialModel() {
@@ -1121,6 +991,70 @@ private struct ContextDetails: View {
 /// Collapsible reasoning ("thinking") section styled after the web app: a
 /// brain glyph and a muted label, with a chevron that follows the text color
 /// instead of the accent tint.
+/// A pasted log or file is easily thousands of lines, and a self-sizing row
+/// has to lay out every one of them just to measure itself. Capping the
+/// collapsed height caps that work too, so the cost of a long message is the
+/// same as a short one until the reader asks for the rest.
+private struct UserMessageBubble: View {
+    let parts: [ChatMessagePart]
+
+    @State private var expanded = false
+
+    private static let collapsedLineLimit = 12
+    /// Deliberately a character/line count rather than a measurement — asking
+    /// for the real height is the work this exists to avoid.
+    private static let longMessageCharacters = 500
+
+    private var isLong: Bool {
+        var characters = 0
+        var lines = 0
+        for text in parts.compactMap(\.text) {
+            characters += text.count
+            lines += 1 + text.reduce(into: 0) { count, character in
+                if character.isNewline { count += 1 }
+            }
+            if characters > Self.longMessageCharacters || lines > Self.collapsedLineLimit {
+                return true
+            }
+        }
+        return false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                if let text = part.text {
+                    Text(text)
+                }
+            }
+            .lineLimit(expanded || !isLong ? nil : Self.collapsedLineLimit)
+
+            if isLong {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(expanded ? "Show Less" : "Show More")
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
+                    .font(.caption)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .font(.body)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10)
+        .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: 620, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
 private struct ReasoningDisclosure: View {
     let text: String
     let isStreaming: Bool
@@ -1151,37 +1085,36 @@ private struct ReasoningDisclosure: View {
                 Text(text)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 }
 
-private struct ChatMessageView: View {
-    @Environment(AuthStore.self) private var auth
-    @Environment(ChatStore.self) private var store
-
-    let message: ChatMessage
+struct ChatHistoryEntryView: View {
+    let entry: ChatHistoryEntry
     let conversationID: String
     let runActive: Bool
 
-    private var isUser: Bool { message.role == .user }
-
+    @ViewBuilder
     var body: some View {
-        VStack(alignment: isUser ? .trailing : .leading, spacing: 7) {
+        switch entry.kind {
+        case .header:
             HStack(spacing: 5) {
-                Text(isUser ? "You" : "Assistant")
+                if entry.role == .user {
+                    Spacer(minLength: 0)
+                }
+                Text(entry.role == .user ? "You" : "Assistant")
                     .fontWeight(.medium)
-                if !isUser, let modelName = message.metadata?.model?.name {
+                if entry.role == .assistant, let modelName = entry.metadata?.model?.name {
                     Text("·")
                     Text(modelName)
                 }
-                if let date = message.metadata?.createdDate {
+                if let date = entry.metadata?.createdDate {
                     Text("·")
                     Text(date, format: .relative(presentation: .named))
                 }
-                if message.metadata?.status == .streaming {
+                if entry.metadata?.status == .streaming {
                     Text("STREAMING")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(Color.accentColor)
@@ -1194,82 +1127,49 @@ private struct ChatMessageView: View {
                             .easeInOut(duration: 0.8)
                         }
                 }
+                if entry.role == .assistant {
+                    Spacer(minLength: 0)
+                }
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
 
-            if isUser {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
-                        if part.type == "text", let text = part.text {
-                            Text(text)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-                .font(.body)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 10)
-                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 14))
-                .frame(maxWidth: 620, alignment: .trailing)
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    if showsWaitingIndicator {
-                        TypingDotsView()
-                    }
-                    ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
-                        AssistantMessagePartView(
-                            part: part,
-                            approvalData: approvalData(for: part),
-                            conversationID: conversationID,
-                            runActive: runActive,
-                            messageStatus: message.metadata?.status
-                        )
-                    }
+        case let .userContent(parts):
+            UserMessageBubble(parts: parts)
 
-                    if let error = message.metadata?.error {
-                        Label(error.message, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
+        case .waiting:
+            TypingDotsView()
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let usage = message.metadata?.usage,
-                   usage.inputTokens > 0 || usage.outputTokens > 0 {
-                    Text("↑ \(usage.inputTokens) in   ↓ \(usage.outputTokens) out")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    }
+        case let .assistantPart(part, approvalData):
+            AssistantMessagePartView(
+                part: part,
+                approvalData: approvalData,
+                conversationID: conversationID,
+                runActive: runActive,
+                messageStatus: entry.metadata?.status
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-    /// True while the run is active but nothing visible has arrived yet (no
-    /// text, no tool call) — the typing dots fill this otherwise blank wait.
-    private var showsWaitingIndicator: Bool {
-        guard !isUser else { return false }
-        let status = message.metadata?.status
-        guard status == .streaming || status == .pending else { return false }
-        return !message.parts.contains { part in
-            (part.text?.isEmpty == false) || part.type == "dynamic-tool"
-        }
-    }
+        case let .error(error):
+            Label(error.message, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-    private func approvalData(for toolPart: ChatMessagePart) -> JSONValue? {
-        guard toolPart.type == "dynamic-tool", let toolCallID = toolPart.toolCallID else { return nil }
-        return message.parts.first(where: { part in
-            guard part.type == "data-approval",
-                  let object = part.data?.objectValue else { return false }
-            return object["toolCallId"]?.stringValue == toolCallID
-        })?.data
+        case let .usage(usage):
+            Text("↑ \(usage.inputTokens) in   ↓ \(usage.outputTokens) out")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
 /// Three staggered pulsing dots shown while the assistant's first token is
 /// still on its way, so the wait never looks frozen.
-private struct TypingDotsView: View {
+struct TypingDotsView: View {
     @State private var animating = false
 
     var body: some View {
@@ -1293,7 +1193,7 @@ private struct TypingDotsView: View {
     }
 }
 
-private struct AssistantMessagePartView: View {
+struct AssistantMessagePartView: View {
     let part: ChatMessagePart
     let approvalData: JSONValue?
     let conversationID: String
@@ -1314,11 +1214,9 @@ private struct AssistantMessagePartView: View {
                 if isStreaming {
                     Text(text)
                         .font(.body)
-                        .textSelection(.enabled)
                 } else {
                     Markdown(text)
                         .workspaceMarkdownCodeStyle()
-                        .textSelection(.enabled)
                 }
             }
         case "reasoning":
@@ -1459,7 +1357,6 @@ private struct MemoryToolCard: View {
                         .strikethrough(payload?.action == .forgotten)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
                 }
             }
             if isError, let errorText = part.errorText {
@@ -3222,7 +3119,6 @@ private struct JSONSection: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(displayText)
                     .font(.system(.caption2, design: .monospaced))
-                    .textSelection(.enabled)
             }
             .padding(8)
             .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8))

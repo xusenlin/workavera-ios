@@ -31,6 +31,10 @@ final class ChatStore {
     private(set) var isCreating = false
 
     private(set) var messagesByConversationID: [String: [ChatMessage]] = [:]
+    /// Flattened history rows, rebuilt only when the messages behind them
+    /// change. The list reads this on every body evaluation — deriving it
+    /// there put the whole flatten on the streaming path.
+    private(set) var historyEntriesByConversationID: [String: [ChatHistoryEntry]] = [:]
     private(set) var loadingMessageConversationIDs: Set<String> = []
     private(set) var activeRunIDs: [String: String] = [:]
     private(set) var messageErrorMessages: [String: String] = [:]
@@ -48,6 +52,19 @@ final class ChatStore {
 
     func messages(for conversationID: String) -> [ChatMessage] {
         messagesByConversationID[conversationID] ?? []
+    }
+
+    func historyEntries(for conversationID: String) -> [ChatHistoryEntry] {
+        historyEntriesByConversationID[conversationID] ?? []
+    }
+
+    /// The single place messages are stored, so the flattened rows can never
+    /// drift out of sync with them.
+    private func setMessages(_ messages: [ChatMessage]?, for conversationID: String) {
+        messagesByConversationID[conversationID] = messages
+        historyEntriesByConversationID[conversationID] = messages.map(
+            ChatHistoryEntry.makeEntries(from:)
+        )
     }
 
     func isGenerating(_ conversationID: String) -> Bool {
@@ -78,6 +95,7 @@ final class ChatStore {
         mutatingConversationIDs = []
         isCreating = false
         messagesByConversationID = [:]
+        historyEntriesByConversationID = [:]
         loadingMessageConversationIDs = []
         activeRunIDs = [:]
         messageErrorMessages = [:]
@@ -178,10 +196,10 @@ final class ChatStore {
                last.role == .assistant,
                last.metadata?.status == .streaming,
                let runID = last.metadata?.runID {
-                messagesByConversationID[conversationID] = Array(loaded.dropLast())
+                setMessages(Array(loaded.dropLast()), for: conversationID)
                 resumeRun(conversationID: conversationID, runID: runID, using: auth)
             } else {
-                messagesByConversationID[conversationID] = loaded
+                setMessages(loaded, for: conversationID)
                 activeRunIDs[conversationID] = nil
                 if !recoverActiveRun, loaded.last?.metadata?.status == .streaming {
                     messageErrorMessages[conversationID] =
@@ -238,7 +256,7 @@ final class ChatStore {
             messages.append(userMessage)
             let reducer = ChatStreamReducer(messageID: "stream-\(runID)", runID: runID)
             messages.append(reducer.message)
-            messagesByConversationID[conversationID] = messages
+            setMessages(messages, for: conversationID)
             consume(
                 stream,
                 reducer: reducer,
@@ -394,7 +412,7 @@ final class ChatStore {
             try await auth.deleteChatConversation(id: conversation.id)
             streamTasks[conversation.id]?.cancel()
             streamTasks[conversation.id] = nil
-            messagesByConversationID[conversation.id] = nil
+            setMessages(nil, for: conversation.id)
             activeRunIDs[conversation.id] = nil
             messageErrorMessages[conversation.id] = nil
             if conversation.status == .archived {
@@ -697,7 +715,7 @@ final class ChatStore {
         } else {
             messages.append(message)
         }
-        messagesByConversationID[conversationID] = messages
+        setMessages(messages, for: conversationID)
     }
 
     private static func activeSort(lhs: ChatConversation, rhs: ChatConversation) -> Bool {
