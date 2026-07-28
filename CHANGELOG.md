@@ -10,6 +10,8 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-28
+
 ### Added
 
 - Connect your own MCP servers from Settings and use their tools in Chat.
@@ -56,3 +58,6 @@ Server-side changes are recorded separately, in the
   render; an approval request breaks that assumption, because the server
   blocks on the answer, so it is exempt from the throttle.
 - Approval tool cards stay expanded while a decision is pending.
+
+[Unreleased]: https://github.com/xusenlin/workavera-ios/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/xusenlin/workavera-ios/releases/tag/v1.0.1
