@@ -1346,6 +1346,9 @@ private struct MemoryToolCard: View {
                 Spacer(minLength: 8)
                 statusAccessory
             }
+            if let input = part.input {
+                ToolParametersPanel(value: input)
+            }
             if let content = payload?.content, !content.isEmpty {
                 HStack(alignment: .top, spacing: 8) {
                     RoundedRectangle(cornerRadius: 1.5, style: .continuous)
@@ -1536,6 +1539,9 @@ private struct DocsToolCard: View {
     @ViewBuilder
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let input = part.input {
+                ToolParametersPanel(value: input)
+            }
             if isWorking, let inputSummary {
                 Label(inputSummary, systemImage: meta.icon)
                     .font(.caption)
@@ -1837,6 +1843,9 @@ private struct ContactsToolCard: View {
     @ViewBuilder
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let input = part.input {
+                ToolParametersPanel(value: input)
+            }
             if isWorking, let query = part.input?.objectValue?["query"]?.stringValue, !query.isEmpty {
                 Label(query, systemImage: "magnifyingglass")
                     .font(.caption)
@@ -2005,6 +2014,9 @@ private struct BoardToolCard: View {
     @ViewBuilder
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let input = part.input {
+                ToolParametersPanel(value: input)
+            }
             if isWorking, let query = part.input?.objectValue?["query"]?.stringValue, !query.isEmpty {
                 Label(query, systemImage: "magnifyingglass")
                     .font(.caption)
@@ -2348,6 +2360,9 @@ private struct CalendarToolCard: View {
     @ViewBuilder
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let input = part.input {
+                ToolParametersPanel(value: input)
+            }
             if let payload {
                 if toolName == "calendar_get_schedule" {
                     scheduleView(payload)
@@ -2676,6 +2691,9 @@ private struct ReadingToolCard: View {
     @ViewBuilder
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let input = part.input {
+                ToolParametersPanel(value: input)
+            }
             if isWorking, let query = part.input?.objectValue?["query"]?.stringValue, !query.isEmpty {
                 Label(query, systemImage: "magnifyingglass")
                     .font(.caption)
@@ -2902,7 +2920,7 @@ private struct ChatToolCard: View {
                         .foregroundStyle(.secondary)
                 }
                 if let input = part.input {
-                    JSONSection(title: "Input", value: input)
+                    ToolParametersPanel(value: input)
                 }
                 if let output = part.output {
                     JSONSection(title: "Output", value: output)
@@ -3078,6 +3096,92 @@ private struct ChatToolCard: View {
                 using: auth
             )
         }
+    }
+}
+
+private struct ToolParametersPanel: View {
+    let value: JSONValue
+
+    @State private var expanded = false
+    @State private var copied = false
+
+    private var summary: String {
+        ToolParameterFormatter.summary(value)
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if !summary.isEmpty {
+            DisclosureGroup(isExpanded: $expanded) {
+                if expanded {
+                    let preview = ToolParameterFormatter.preview(value)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                            Text(preview.text)
+                                .font(.system(.caption2, design: .monospaced))
+                                .fixedSize(horizontal: true, vertical: true)
+                                .padding(8)
+                        }
+                        .frame(height: previewHeight(for: preview.text))
+
+                        if preview.truncated {
+                            Text(
+                                "Preview limited to 12,000 characters, 10 array items, and 4 levels. Copy to inspect the complete parameters."
+                            )
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(alignment: .top) {
+                                Divider()
+                            }
+                        }
+                    }
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.top, 6)
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text("Parameters")
+                        .font(.system(size: 10, weight: .medium))
+                        .textCase(.uppercase)
+                        .foregroundStyle(.secondary)
+                    Text(summary)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Button {
+                        UIPasteboard.general.string = ToolParameterFormatter.fullText(value)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            copied = false
+                        }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Copy full parameters")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color(.tertiarySystemFill).opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func previewHeight(for text: String) -> CGFloat {
+        let lines = text.reduce(into: 1) { count, character in
+            if character == "\n" { count += 1 }
+        }
+        return min(max(CGFloat(lines) * 15 + 16, 32), 320)
     }
 }
 
