@@ -603,6 +603,38 @@ final class AuthStore {
         try await makeClient().revokeAPIKey(id: id, token: token)
     }
 
+    func loadMCPServers(strategy: DataLoadStrategy = .networkOnly) async throws -> [MCPServer] {
+        guard let token else { throw sessionUnavailableError }
+        return try await load(strategy: strategy) { client in
+            try await client.getMCPServers(token: token)
+        }
+    }
+
+    func createMCPServer(input: MCPServerInput) async throws -> MCPServer {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().createMCPServer(input: input, token: token)
+    }
+
+    func updateMCPServer(id: String, input: MCPServerUpdate) async throws -> MCPServer {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().updateMCPServer(id: id, input: input, token: token)
+    }
+
+    func refreshMCPServer(id: String) async throws -> MCPRefreshResponse {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().refreshMCPServer(id: id, token: token)
+    }
+
+    func updateMCPServerTools(id: String, tools: [MCPToolDecision]) async throws -> MCPServer {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().updateMCPServerTools(id: id, tools: tools, token: token)
+    }
+
+    func deleteMCPServer(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteMCPServer(id: id, token: token)
+    }
+
     func loadLLMModels(strategy: DataLoadStrategy = .networkOnly) async throws -> [LLMModelConfiguration] {
         guard let token else { throw sessionUnavailableError }
         return try await load(strategy: strategy) { client in

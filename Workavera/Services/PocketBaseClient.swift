@@ -1080,6 +1080,116 @@ struct PocketBaseClient {
         return response.shared
     }
 
+    func getMCPServers(token: String) async throws -> [MCPServer] {
+        try await listAllRecords(
+            collection: "mcp_servers",
+            filter: "",
+            sort: "created",
+            token: token
+        )
+    }
+
+    func createMCPServer(
+        input: MCPServerInput,
+        token: String
+    ) async throws -> MCPServer {
+        struct Body: Encodable {
+            let name: String
+            let slug: String
+            let transport: String
+            let url: String
+            let approvalPolicy: String
+            let headers: [String: String]
+        }
+        return try await sendJSON(
+            path: "/api/mcp-servers",
+            method: "POST",
+            body: Body(
+                name: input.name,
+                slug: input.slug,
+                transport: input.transport.rawValue,
+                url: input.url,
+                approvalPolicy: input.approvalPolicy.rawValue,
+                headers: input.headers
+            ),
+            token: token
+        )
+    }
+
+    /// Credentials are write-only, so an untouched header field must leave the
+    /// stored headers alone rather than replacing them with nothing.
+    func updateMCPServer(
+        id: String,
+        input: MCPServerUpdate,
+        token: String
+    ) async throws -> MCPServer {
+        struct Body: Encodable {
+            let name: String?
+            let url: String?
+            let transport: String?
+            let approvalPolicy: String?
+            let headers: [String: String]?
+            let enabled: Bool?
+        }
+        return try await sendJSON(
+            path: "/api/mcp-servers/\(id)",
+            method: "PATCH",
+            body: Body(
+                name: input.name,
+                url: input.url,
+                transport: input.transport?.rawValue,
+                approvalPolicy: input.approvalPolicy?.rawValue,
+                headers: input.headers,
+                enabled: input.enabled
+            ),
+            token: token
+        )
+    }
+
+    func refreshMCPServer(id: String, token: String) async throws -> MCPRefreshResponse {
+        try await send(
+            path: "/api/mcp-servers/\(id)/refresh",
+            method: "POST",
+            token: token
+        )
+    }
+
+    /// Applies the user's review decisions. The route only accepts the two
+    /// fields the user owns: whether a tool is enabled and whether each call
+    /// needs approval. Tool definitions themselves only come from a refresh.
+    func updateMCPServerTools(
+        id: String,
+        tools: [MCPToolDecision],
+        token: String
+    ) async throws -> MCPServer {
+        struct ToolBody: Encodable {
+            let name: String
+            let enabled: Bool
+            let approval: String
+        }
+        struct Body: Encodable {
+            let tools: [ToolBody]
+        }
+        return try await sendJSON(
+            path: "/api/mcp-servers/\(id)/tools",
+            method: "PATCH",
+            body: Body(
+                tools: tools.map {
+                    ToolBody(name: $0.name, enabled: $0.enabled, approval: $0.approval.rawValue)
+                }
+            ),
+            token: token
+        )
+    }
+
+    func deleteMCPServer(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/mcp_servers/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func getSavedMemories(token: String) async throws -> [SavedChatMemory] {
         try await listAllRecords(
             collection: "chat_memories",

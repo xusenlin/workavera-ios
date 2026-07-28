@@ -52,6 +52,11 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink {
+                    MCPServersView()
+                } label: {
+                    Label("MCP Servers", systemImage: "server.rack")
+                }
+                NavigationLink {
                     APIKeysView()
                 } label: {
                     Label("API Keys", systemImage: "key")
@@ -59,7 +64,7 @@ struct SettingsView: View {
             } header: {
                 Text("Developer")
             } footer: {
-                Text("Connect third-party MCP clients to your Workavera tools.")
+                Text("Connect your own MCP servers so Chat can use their tools, or issue keys for third-party MCP clients to reach your Workavera tools.")
             }
 
             Section {
