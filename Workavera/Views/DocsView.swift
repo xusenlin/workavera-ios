@@ -480,7 +480,6 @@ private struct DocumentDetailView: View {
     @Environment(DocsStore.self) private var docs
     let documentID: String
     @State private var showVersions = false
-    @State private var htmlHeight: CGFloat = 120
 
     private var document: WorkspaceDocument? {
         docs.documentCache[documentID]
@@ -526,60 +525,35 @@ private struct DocumentDetailView: View {
         }
     }
 
+    /// The body gets the whole screen and scrolls itself: metadata above it takes
+    /// away screen the document needs, and a page with sticky elements of its own
+    /// is left scrolling inside a strip.
+    @ViewBuilder
     private func documentContent(_ document: WorkspaceDocument) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let error = docs.errorMessage {
-                    InlineErrorBanner(message: error) {
-                        Task { await docs.loadDocument(id: document.id, using: auth, force: true) }
-                    }
-                    .padding(.horizontal, 20)
-                }
-                documentHeader(document)
-                    .padding(.horizontal, 20)
-                Divider()
-                    .padding(.horizontal, 20)
-                if document.kind == .html {
-                    HTMLView(html: document.content, contentHeight: $htmlHeight)
-                        .frame(height: max(htmlHeight, 1))
-                        .frame(maxWidth: .infinity)
-                } else {
+        Group {
+            if document.kind == .html {
+                HTMLView(html: document.content)
+            } else {
+                ScrollView {
                     MarkdownDocumentView(content: document.content)
                         .padding(.horizontal, 16)
+                        .padding(.vertical, 20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollBounceBehavior(.always)
+                .refreshable {
+                    await docs.loadDocument(id: document.id, using: auth, force: true)
                 }
             }
-            .padding(.vertical, 20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollBounceBehavior(.always)
-        .refreshable {
-            await docs.loadDocument(id: document.id, using: auth, force: true)
-        }
-    }
-
-    private func documentHeader(_ document: WorkspaceDocument) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(document.kind == .html ? "HTML" : "MARKDOWN")
-                    .font(.caption2.weight(.semibold))
-                    .tracking(0.8)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(.tertiarySystemFill), in: Capsule())
-                if document.status == .archived {
-                    Text("ARCHIVED")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.orange)
+        .safeAreaInset(edge: .top) {
+            if let error = docs.errorMessage {
+                InlineErrorBanner(message: error) {
+                    Task { await docs.loadDocument(id: document.id, using: auth, force: true) }
                 }
+                .padding(.horizontal, 20)
             }
-            Text("\(docs.locationName(for: document)) · Version \(document.revision)")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Text("Updated \(document.updatedAt.formatted(.relative(presentation: .named)))")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -696,21 +670,12 @@ private struct DocumentVersionDetailView: View {
     let revision: Int
     @State private var version: DocumentVersion?
     @State private var errorMessage: String?
-    @State private var htmlHeight: CGFloat = 120
 
     var body: some View {
         Group {
             if let version {
                 if kind == .html {
-                    ScrollView {
-                        HTMLView(
-                            html: version.content ?? "",
-                            contentHeight: $htmlHeight
-                        )
-                        .frame(height: max(htmlHeight, 1))
-                        .frame(maxWidth: .infinity)
-                        .padding(20)
-                    }
+                    HTMLView(html: version.content ?? "")
                 } else {
                     ScrollView {
                         MarkdownDocumentView(content: version.content ?? "")

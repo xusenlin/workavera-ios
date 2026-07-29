@@ -12,6 +12,11 @@ Server-side changes are recorded separately, in the
 
 ### Fixed
 
+- A document body now fills the screen and scrolls on its own. The metadata
+  header above it is gone, for markdown as well, so a document with sticky
+  elements of its own is no longer left scrolling inside a strip. Pull to
+  refresh remains on markdown documents; an HTML document scrolls in its own
+  web view and no longer offers it.
 - A conversation list reordered after pinning or restoring now uses the same
   order as the server: pinned first, then by latest message, then by last
   edit. A locally reordered list no longer disagrees with the next refresh.

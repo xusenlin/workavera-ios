@@ -1,14 +1,14 @@
 import SwiftUI
 import WebKit
 
-/// A read-only HTML renderer with JavaScript, in-document anchors, and dynamic height.
-/// The surrounding ScrollView owns vertical scrolling, and external links are blocked.
+/// A read-only HTML renderer with JavaScript and in-document anchors.
+/// It fills the screen and owns its scrolling, so a document with sticky elements
+/// of its own has a full viewport to lay them out against. External links are blocked.
 struct HTMLView: UIViewRepresentable {
     let html: String
-    @Binding var contentHeight: CGFloat
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(self)
+        Coordinator()
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -23,14 +23,7 @@ struct HTMLView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = true
-        // Disable the web view's own rubber-banding so a vertical drag isn't
-        // consumed by its scroll view; the outer SwiftUI ScrollView owns
-        // vertical scrolling. Horizontal scrolling (wide tables, <pre>) stays.
-        webView.scrollView.bounces = false
-        webView.scrollView.alwaysBounceVertical = false
         webView.scrollView.alwaysBounceHorizontal = false
-        webView.scrollView.showsVerticalScrollIndicator = false
-        webView.scrollView.showsHorizontalScrollIndicator = true
         webView.scrollView.isDirectionalLockEnabled = true
         webView.navigationDelegate = context.coordinator
         return webView
@@ -91,21 +84,7 @@ struct HTMLView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
-        private let parent: HTMLView
         var loadedHTML: String?
-
-        init(_ parent: HTMLView) {
-            self.parent = parent
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript("document.documentElement.scrollHeight") { result, _ in
-                guard let height = result as? CGFloat, height > 0 else { return }
-                DispatchQueue.main.async {
-                    self.parent.contentHeight = height
-                }
-            }
-        }
 
         /// Allows #anchor navigation within the current document and blocks external pages.
         func webView(
