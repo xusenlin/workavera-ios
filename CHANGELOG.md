@@ -12,6 +12,9 @@ Server-side changes are recorded separately, in the
 
 ### Fixed
 
+- Archived tasks no longer appear in Board pages, dashboard counts, or
+  Calendar deadlines; Calendar also limits task deadlines to tasks assigned
+  to the signed-in user.
 - Tool cards now show their preparing or running state as soon as a tool call
   begins. Tool lifecycle events bypass the stream's 80 ms text refresh
   throttle, so a quiet execution period no longer makes Chat appear frozen

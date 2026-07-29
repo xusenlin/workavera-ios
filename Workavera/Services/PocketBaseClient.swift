@@ -748,7 +748,7 @@ struct PocketBaseClient {
         ) ?? now.addingTimeInterval(7 * 24 * 60 * 60)
         let nowValue = Self.dashboardDate(now)
         let nextWeekValue = Self.dashboardDate(nextWeek)
-        let openTaskFilter = "state.category != \"completed\""
+        let openTaskFilter = "state.category != \"completed\" && archived = false"
 
         async let projects: RecordListResponse<RecordIDOnly> = send(
             path: "/api/collections/board_projects/records",
@@ -1256,7 +1256,10 @@ struct PocketBaseClient {
         )
     }
 
-    func getCalendarSnapshot(token: String) async throws -> CalendarSnapshot {
+    func getCalendarSnapshot(
+        userID: String,
+        token: String
+    ) async throws -> CalendarSnapshot {
         struct SystemConfig: Decodable { let timezone: String }
 
         async let eventsRequest: [AppEvent] = listAllRecords(
@@ -1267,7 +1270,7 @@ struct PocketBaseClient {
         )
         async let tasksRequest: [CalendarTaskDeadline] = listAllRecords(
             collection: "board_tasks",
-            filter: "due_date != \"\"",
+            filter: "due_date != \"\" && archived = false && assignees ?= \"\(userID)\"",
             sort: "due_date",
             expand: "project,state",
             token: token
@@ -1357,6 +1360,7 @@ struct PocketBaseClient {
         }
 
         let filter = Self.projectFilter(projectIDs)
+        let activeTaskFilter = "(\(filter)) && archived = false"
         async let statesRequest: [BoardStateRecord] = listAllRecords(
             collection: "board_project_states",
             filter: filter,
@@ -1365,7 +1369,7 @@ struct PocketBaseClient {
         )
         async let tasksRequest: [BoardTaskRecord] = listAllRecords(
             collection: "board_tasks",
-            filter: filter,
+            filter: activeTaskFilter,
             sort: "rank",
             token: token
         )

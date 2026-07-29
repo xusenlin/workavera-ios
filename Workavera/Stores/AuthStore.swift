@@ -722,9 +722,12 @@ final class AuthStore {
     }
 
     func loadCalendarSnapshot(strategy: DataLoadStrategy = .networkOnly) async throws -> CalendarSnapshot {
-        guard let token else { throw sessionUnavailableError }
+        guard let user, let token else { throw sessionUnavailableError }
         return try await load(strategy: strategy) { client in
-            try await client.getCalendarSnapshot(token: token)
+            try await client.getCalendarSnapshot(
+                userID: user.id,
+                token: token
+            )
         }
     }
 

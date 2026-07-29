@@ -293,6 +293,7 @@ final class PocketBaseClientTests: XCTestCase {
                 totalItems = 4
             case "/api/collections/board_tasks/records":
                 XCTAssertTrue(query["filter"]?.hasPrefix("state.category != \"completed\"") == true)
+                XCTAssertTrue(query["filter"]?.contains("archived = false") == true)
                 if query["filter"]?.contains("due_date >=") == true {
                     XCTAssertTrue(query["filter"]?.contains("due_date <") == true)
                     totalItems = 5
@@ -636,7 +637,7 @@ final class PocketBaseClientTests: XCTestCase {
                 body = Data(##"{"items":[{"id":"state-1","project":"project-1","name":"Doing","color":"#3b82f6","category":"active","sort_order":2048}]}"##.utf8)
 
             case "/api/collections/board_tasks/records":
-                XCTAssertEqual(query["filter"], "project = \"project-1\"")
+                XCTAssertEqual(query["filter"], "(project = \"project-1\") && archived = false")
                 XCTAssertEqual(query["sort"], "rank")
                 body = Data(#"{"items":[{"id":"task-1","project":"project-1","state":"state-1","title":"Connect Board","description":"Use PocketBase records","priority":"high","labels":["label-1"],"assignees":["member-1"],"documents":["document-1","document-2"],"due_date":"2026-07-30 08:00:00.000Z","rank":1024}]}"#.utf8)
 
@@ -1032,7 +1033,10 @@ final class PocketBaseClientTests: XCTestCase {
             case ("GET", "/api/collections/board_tasks/records"):
                 XCTAssertEqual(query["page"], "1")
                 XCTAssertEqual(query["perPage"], "200")
-                XCTAssertEqual(query["filter"], "due_date != \"\"")
+                XCTAssertEqual(
+                    query["filter"],
+                    "due_date != \"\" && archived = false && assignees ?= \"user-1\""
+                )
                 XCTAssertEqual(query["sort"], "due_date")
                 XCTAssertEqual(query["expand"], "project,state")
                 response = Data(#"{"page":1,"totalPages":1,"items":[{"id":"task-1","project":"project-1","title":"Ship iOS","description":"Release build","priority":"urgent","due_date":"2026-07-21 00:00:00.000Z","expand":{"project":{"name":"Mobile"},"state":{"category":"active"}}}]}"#.utf8)
@@ -1077,7 +1081,10 @@ final class PocketBaseClientTests: XCTestCase {
         }
 
         let client = try makeClient()
-        let snapshot = try await client.getCalendarSnapshot(token: "token-value")
+        let snapshot = try await client.getCalendarSnapshot(
+            userID: "user-1",
+            token: "token-value"
+        )
         XCTAssertEqual(snapshot.timezone, "Asia/Shanghai")
         XCTAssertEqual(snapshot.events.first?.timezone, "Asia/Shanghai")
         XCTAssertEqual(snapshot.events.first?.recurrenceFrequency, .weekly)
