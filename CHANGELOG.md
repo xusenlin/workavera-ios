@@ -10,6 +10,13 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+### Fixed
+
+- Tool cards now show their preparing or running state as soon as a tool call
+  begins. Tool lifecycle events bypass the stream's 80 ms text refresh
+  throttle, so a quiet execution period no longer makes Chat appear frozen
+  until the result arrives.
+
 ## [1.0.1] - 2026-07-28
 
 ### Added

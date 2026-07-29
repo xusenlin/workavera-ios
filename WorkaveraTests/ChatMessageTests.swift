@@ -77,4 +77,34 @@ final class ChatMessageTests: XCTestCase {
             "done"
         )
     }
+
+    func testToolLifecycleBoundariesRenderImmediately() throws {
+        let immediateTypes = [
+            "tool-input-start",
+            "tool-input-available",
+            "tool-input-error",
+            "tool-approval-request",
+            "tool-approval-response",
+            "tool-output-available",
+            "tool-output-error",
+            "tool-output-denied",
+            "data-approval",
+        ]
+
+        for type in immediateTypes {
+            let chunk = try JSONDecoder().decode(
+                ChatStreamChunk.self,
+                from: Data(#"{"type":"\#(type)"}"#.utf8)
+            )
+            XCTAssertTrue(chunk.requiresImmediateRender, type)
+        }
+
+        for type in ["start", "text-delta", "reasoning-delta", "tool-input-delta"] {
+            let chunk = try JSONDecoder().decode(
+                ChatStreamChunk.self,
+                from: Data(#"{"type":"\#(type)"}"#.utf8)
+            )
+            XCTAssertFalse(chunk.requiresImmediateRender, type)
+        }
+    }
 }

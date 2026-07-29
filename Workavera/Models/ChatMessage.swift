@@ -336,11 +336,24 @@ struct ChatStreamChunk: Decodable, Equatable, Sendable {
     }
 
     /// Chunks that must reach the UI on arrival rather than waiting for the
-    /// stream's flush throttle. An approval request stops the run until the
-    /// user answers, so no later chunk would arrive to carry a skipped
-    /// refresh, and the approval payload arrives with it.
+    /// stream's flush throttle. Tool lifecycle boundaries are sparse and can
+    /// be followed by a long execution pause, so delaying one can hide the
+    /// pending card until the result arrives. Tool input deltas remain
+    /// throttled because they may be emitted for every generated token.
     var requiresImmediateRender: Bool {
-        type == "tool-approval-request" || type.hasPrefix("data-")
+        switch type {
+        case "tool-input-start",
+             "tool-input-available",
+             "tool-input-error",
+             "tool-approval-request",
+             "tool-approval-response",
+             "tool-output-available",
+             "tool-output-error",
+             "tool-output-denied":
+            true
+        default:
+            type.hasPrefix("data-")
+        }
     }
 }
 

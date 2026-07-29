@@ -647,13 +647,10 @@ final class ChatStore {
                     // one refresh per interval, but always render the first chunk
                     // immediately so the user sees the response start.
                     //
-                    // An approval request is exempt. The server blocks on the
-                    // user's decision, so it is the last chunk to arrive until
-                    // they answer: throttling it away would leave the card
-                    // showing the previous state with no buttons, and no later
-                    // chunk would ever come to flush it. The data part carrying
-                    // the approval payload is exempt for the same reason — the
-                    // buttons need its approvalId.
+                    // Tool state boundaries are exempt because execution can
+                    // leave no later chunk to flush a skipped pending card.
+                    // High-frequency text, reasoning, and tool-input deltas
+                    // still pass through the throttle.
                     let now = ContinuousClock.now
                     if !chunk.requiresImmediateRender,
                        let lastFlush,
