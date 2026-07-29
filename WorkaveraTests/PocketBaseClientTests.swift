@@ -802,6 +802,30 @@ final class PocketBaseClientTests: XCTestCase {
         XCTAssertEqual(updated.dueDate, "")
     }
 
+    func testArchiveBoardTaskUsesAuthenticatedPatch() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.url?.path, "/api/collections/board_tasks/records/task-1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let fields = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Bool]
+            )
+            XCTAssertEqual(fields, ["archived": true])
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"id":"task-1","archived":true}"#.utf8)
+            )
+        }
+
+        let archived = try await makeClient().archiveBoardTask(
+            id: "task-1",
+            token: "token-value"
+        )
+
+        XCTAssertEqual(archived.id, "task-1")
+        XCTAssertTrue(archived.archived)
+    }
+
     func testLLMModelManagementAndSharingUseProtectedRoutes() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")

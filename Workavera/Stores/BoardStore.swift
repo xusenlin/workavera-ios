@@ -206,6 +206,32 @@ final class BoardStore {
         }
     }
 
+    func archiveTask(_ task: BoardTask, using auth: AuthStore) async -> Bool {
+        guard !updatingTaskIDs.contains(task.id),
+              let projectIndex = projects.firstIndex(where: { $0.id == task.projectID }),
+              projects[projectIndex].states.last?.id == task.stateID,
+              let stateIndex = projects[projectIndex].states.firstIndex(where: { $0.id == task.stateID }),
+              let taskIndex = projects[projectIndex].states[stateIndex].tasks.firstIndex(where: { $0.id == task.id })
+        else {
+            return false
+        }
+
+        let previousProjects = projects
+        projects[projectIndex].states[stateIndex].tasks.remove(at: taskIndex)
+        updatingTaskIDs.insert(task.id)
+        defer { updatingTaskIDs.remove(task.id) }
+
+        do {
+            try await auth.archiveBoardTask(id: task.id)
+            await refresh(using: auth)
+            return true
+        } catch {
+            projects = previousProjects
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func clearError() {
         errorMessage = nil
     }

@@ -1462,6 +1462,21 @@ struct PocketBaseClient {
         )
     }
 
+    func archiveBoardTask(
+        id: String,
+        token: String
+    ) async throws -> BoardTaskArchiveResponse {
+        struct Body: Encodable {
+            let archived: Bool
+        }
+        return try await sendJSON(
+            path: "/api/collections/board_tasks/records/\(id)",
+            method: "PATCH",
+            body: Body(archived: true),
+            token: token
+        )
+    }
+
     func fileURL(collectionId: String, recordId: String, fileName: String) -> URL? {
         guard !fileName.isEmpty else { return nil }
         return configuration.baseURL.appending(

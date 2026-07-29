@@ -256,3 +256,8 @@ struct BoardTaskDueDateResponse: Decodable {
         case dueDate = "due_date"
     }
 }
+
+struct BoardTaskArchiveResponse: Decodable {
+    let id: String
+    let archived: Bool
+}

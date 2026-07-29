@@ -809,6 +809,11 @@ final class AuthStore {
         )
     }
 
+    func archiveBoardTask(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        _ = try await makeClient().archiveBoardTask(id: id, token: token)
+    }
+
     private func load<Value>(
         strategy: DataLoadStrategy,
         operation: (PocketBaseClient) async throws -> Value

@@ -165,12 +165,17 @@ struct BoardView: View {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(state.tasks) { task in
-                        Button {
+                        TaskCard(
+                            task: task,
+                            isUpdating: board.updatingTaskIDs.contains(task.id),
+                            onArchive: state.id == selectedProject?.states.last?.id
+                                ? { Task { await board.archiveTask(task, using: auth) } }
+                                : nil
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
                             selectedTask = task
-                        } label: {
-                            TaskCard(task: task)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -620,13 +625,31 @@ private struct TaskDetailSheet: View {
 
 private struct TaskCard: View {
     let task: BoardTask
+    let isUpdating: Bool
+    let onArchive: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !task.labels.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(task.labels) { label in
-                        LabelChip(label: label)
+            if !task.labels.isEmpty || onArchive != nil {
+                HStack(alignment: .top, spacing: 8) {
+                    HStack(spacing: 6) {
+                        ForEach(task.labels) { label in
+                            LabelChip(label: label)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let onArchive {
+                        Button(action: onArchive) {
+                            Image(systemName: "archivebox")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isUpdating)
+                        .accessibilityLabel("Archive \(task.title)")
                     }
                 }
             }
