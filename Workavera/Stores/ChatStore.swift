@@ -715,8 +715,16 @@ final class ChatStore {
         setMessages(messages, for: conversationID)
     }
 
+    /// Mirrors the server list order ("-pinned,-last_message_at,-updated"), so a
+    /// list reordered after a local mutation matches the next page the server
+    /// returns. A conversation without a last_message_at sorts below every dated
+    /// one, the way an empty date does on the server. The trailing createdAt
+    /// comparison only keeps the order stable, which `sort(by:)` does not.
     private static func activeSort(lhs: ChatConversation, rhs: ChatConversation) -> Bool {
         if lhs.pinned != rhs.pinned { return lhs.pinned && !rhs.pinned }
+        let lhsLastMessageAt = lhs.lastMessageAt ?? .distantPast
+        let rhsLastMessageAt = rhs.lastMessageAt ?? .distantPast
+        if lhsLastMessageAt != rhsLastMessageAt { return lhsLastMessageAt > rhsLastMessageAt }
         if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
         return lhs.createdAt > rhs.createdAt
     }

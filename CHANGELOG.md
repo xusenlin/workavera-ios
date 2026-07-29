@@ -12,6 +12,9 @@ Server-side changes are recorded separately, in the
 
 ### Fixed
 
+- A conversation list reordered after pinning or restoring now uses the same
+  order as the server: pinned first, then by latest message, then by last
+  edit. A locally reordered list no longer disagrees with the next refresh.
 - Archived tasks no longer appear in Board pages, dashboard counts, or
   Calendar deadlines; Calendar also limits task deadlines to tasks assigned
   to the signed-in user.

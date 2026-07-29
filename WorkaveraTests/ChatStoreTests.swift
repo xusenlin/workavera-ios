@@ -135,6 +135,72 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedConversation?.pinned, true)
     }
 
+    func testPinKeepsTheServerOrderOfTheRemainingConversations() async throws {
+        try await signIn()
+        let store = ChatStore()
+
+        // Server order for "-pinned,-last_message_at,-updated": the conversation
+        // renamed most recently is not the one with the latest message, and the
+        // conversation that never received a message comes last.
+        let quiet = Self.conversationJSON(
+            id: "chat-quiet",
+            status: "active",
+            lastMessageAt: "2026-07-10 08:00:00.000Z",
+            updated: "2026-07-10 08:00:00.000Z"
+        )
+        let items = [
+            Self.conversationJSON(
+                id: "chat-fresh",
+                status: "active",
+                lastMessageAt: "2026-07-27 08:00:00.000Z",
+                updated: "2026-07-20 08:00:00.000Z"
+            ),
+            Self.conversationJSON(
+                id: "chat-renamed",
+                status: "active",
+                lastMessageAt: "2026-07-19 08:00:00.000Z",
+                updated: "2026-07-28 08:00:00.000Z"
+            ),
+            quiet,
+            Self.conversationJSON(
+                id: "chat-undated",
+                status: "active",
+                lastMessageAt: "",
+                updated: "2026-07-29 08:00:00.000Z"
+            ),
+        ].joined(separator: ",")
+
+        MockURLProtocol.handler = { request in
+            Self.response(
+                for: request,
+                body: "{\"page\":1,\"totalPages\":1,\"totalItems\":4,\"items\":[\(items)]}"
+            )
+        }
+        await store.refresh(using: auth)
+
+        let conversation = try XCTUnwrap(
+            store.conversations.first { $0.id == "chat-quiet" }
+        )
+        MockURLProtocol.handler = { request in
+            Self.response(
+                for: request,
+                body: Self.conversationJSON(
+                    id: conversation.id,
+                    status: "active",
+                    pinned: true,
+                    lastMessageAt: "2026-07-10 08:00:00.000Z",
+                    updated: "2026-07-10 08:00:00.000Z"
+                )
+            )
+        }
+        try await store.togglePin(conversation, using: auth)
+
+        XCTAssertEqual(
+            store.conversations.map(\.id),
+            ["chat-quiet", "chat-fresh", "chat-renamed", "chat-undated"]
+        )
+    }
+
     private func signIn() async throws {
         MockURLProtocol.handler = { request in
             switch request.url?.path {
@@ -170,9 +236,11 @@ final class ChatStoreTests: XCTestCase {
         id: String,
         status: String,
         title: String = "Conversation",
-        pinned: Bool = false
+        pinned: Bool = false,
+        lastMessageAt: String = "2026-07-21 08:00:00.000Z",
+        updated: String = "2026-07-21 08:00:00.000Z"
     ) -> String {
-        #"{"id":"\#(id)","owner":"user-1","title":"\#(title)","status":"\#(status)","pinned":\#(pinned),"model_config":"","message_count":2,"tool_call_count":0,"input_tokens":0,"output_tokens":0,"total_tokens":0,"context_tokens":0,"last_message_at":"2026-07-21 08:00:00.000Z","created":"2026-07-21 07:00:00.000Z","updated":"2026-07-21 08:00:00.000Z"}"#
+        #"{"id":"\#(id)","owner":"user-1","title":"\#(title)","status":"\#(status)","pinned":\#(pinned),"model_config":"","message_count":2,"tool_call_count":0,"input_tokens":0,"output_tokens":0,"total_tokens":0,"context_tokens":0,"last_message_at":"\#(lastMessageAt)","created":"2026-07-21 07:00:00.000Z","updated":"\#(updated)"}"#
     }
 
     private static func response(
