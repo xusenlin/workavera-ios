@@ -600,7 +600,6 @@ private struct ChatConversationDetailView: View {
             ChatHistoryList(
                 entries: historyEntries,
                 conversationID: conversationID,
-                activeRunID: store.activeRunIDs[conversationID],
                 auth: auth,
                 store: store
             )
@@ -1094,7 +1093,6 @@ private struct ReasoningDisclosure: View {
 struct ChatHistoryEntryView: View {
     let entry: ChatHistoryEntry
     let conversationID: String
-    let runActive: Bool
 
     @ViewBuilder
     var body: some View {
@@ -1147,7 +1145,7 @@ struct ChatHistoryEntryView: View {
                 part: part,
                 approvalData: approvalData,
                 conversationID: conversationID,
-                runActive: runActive,
+                messageRunID: entry.metadata?.runID,
                 messageStatus: entry.metadata?.status
             )
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1197,7 +1195,7 @@ struct AssistantMessagePartView: View {
     let part: ChatMessagePart
     let approvalData: JSONValue?
     let conversationID: String
-    let runActive: Bool
+    let messageRunID: String?
     let messageStatus: ChatMessageStatus?
 
     /// While the response is still streaming, render plain text to avoid
@@ -1241,7 +1239,7 @@ struct AssistantMessagePartView: View {
                     part: part,
                     approvalData: approvalData,
                     conversationID: conversationID,
-                    runActive: runActive,
+                    messageRunID: messageRunID,
                     messageStatus: messageStatus
                 )
             }
@@ -2873,6 +2871,24 @@ private extension ReadingStatus {
     }
 }
 
+enum ChatApprovalAvailability {
+    /// Approval availability is derived from the message and ChatStore at
+    /// render time. The collection-view bridge deliberately owns none of this
+    /// state, so cell reuse and list optimizations cannot make it stale.
+    static func isAwaitingDecision(
+        partState: String?,
+        messageRunID: String?,
+        activeRunID: String?,
+        messageStatus: ChatMessageStatus?
+    ) -> Bool {
+        partState == "approval-requested"
+            && messageRunID != nil
+            && messageRunID == activeRunID
+            && messageStatus != .error
+            && messageStatus != .cancelled
+    }
+}
+
 private struct ChatToolCard: View {
     @Environment(AuthStore.self) private var auth
     @Environment(ChatStore.self) private var store
@@ -2880,7 +2896,7 @@ private struct ChatToolCard: View {
     let part: ChatMessagePart
     let approvalData: JSONValue?
     let conversationID: String
-    let runActive: Bool
+    let messageRunID: String?
     let messageStatus: ChatMessageStatus?
 
     /// nil until the user taps the card, so the derived value below can keep
@@ -2890,10 +2906,12 @@ private struct ChatToolCard: View {
     private var approvalObject: [String: JSONValue]? { approvalData?.objectValue }
     private var approvalID: String? { approvalObject?["approvalId"]?.stringValue }
     private var awaitingApproval: Bool {
-        part.state == "approval-requested"
-            && runActive
-            && messageStatus != .error
-            && messageStatus != .cancelled
+        ChatApprovalAvailability.isAwaitingDecision(
+            partState: part.state,
+            messageRunID: messageRunID,
+            activeRunID: store.activeRunIDs[conversationID],
+            messageStatus: messageStatus
+        )
     }
 
     /// The approve and reject buttons live in the collapsed region, so a card

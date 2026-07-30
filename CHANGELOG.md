@@ -12,6 +12,9 @@ Server-side changes are recorded separately, in the
 
 ### Fixed
 
+- Chat approval cards show their approve and reject buttons while the current
+  run is waiting for a decision. Cards now derive availability directly from
+  the chat store instead of copying run state into the collection-view layer.
 - Calendar shows unfinished Board task deadlines assigned to the signed-in
   user again, whether they own or participate in the project. The personal
   filter now matches assignee relation IDs and excludes completed states;

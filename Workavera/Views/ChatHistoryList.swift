@@ -39,7 +39,6 @@ private final class TouchDownReporter: UIGestureRecognizer {
 struct ChatHistoryList: UIViewRepresentable {
     let entries: [ChatHistoryEntry]
     let conversationID: String
-    let activeRunID: String?
     let auth: AuthStore
     let store: ChatStore
 
@@ -116,14 +115,16 @@ struct ChatHistoryList: UIViewRepresentable {
         private var isPinnedToBottom = true
 
         func configure(collectionView: UICollectionView, parent: ChatHistoryList) {
+            conversationID = parent.conversationID
             let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
                 [weak self] cell, _, id in
-                guard let self, let entry = entriesByID[id] else { return }
+                guard let self,
+                      let entry = entriesByID[id],
+                      let conversationID else { return }
                 cell.contentConfiguration = UIHostingConfiguration {
                     ChatHistoryEntryView(
                         entry: entry,
-                        conversationID: parent.conversationID,
-                        runActive: entry.metadata?.runID == parent.activeRunID
+                        conversationID: conversationID
                     )
                     .padding(.top, entry.topSpacing)
                     .frame(maxWidth: 760)
@@ -156,11 +157,11 @@ struct ChatHistoryList: UIViewRepresentable {
             guard let dataSource else { return }
 
             if conversationID != parent.conversationID {
-                conversationID = parent.conversationID
                 hasLandedAtBottom = false
                 isLanding = false
                 isPinnedToBottom = true
             }
+            conversationID = parent.conversationID
 
             // Rows whose content moved on need re-rendering; a matching
             // identifier alone would leave the old snapshot on screen.
