@@ -10,6 +10,12 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+### Fixed
+
+- Calendar shows Board task deadlines assigned to the signed-in user again.
+  The personal filter now matches assignee relation IDs instead of comparing
+  the multi-select relation itself, which silently returned no tasks.
+
 ## [1.0.2] - 2026-07-30
 
 Needs a Workavera server on 0.0.10 or newer: task archiving reads a field that
