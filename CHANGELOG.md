@@ -12,9 +12,10 @@ Server-side changes are recorded separately, in the
 
 ### Fixed
 
-- Calendar shows Board task deadlines assigned to the signed-in user again.
-  The personal filter now matches assignee relation IDs instead of comparing
-  the multi-select relation itself, which silently returned no tasks.
+- Calendar shows unfinished Board task deadlines assigned to the signed-in
+  user again, whether they own or participate in the project. The personal
+  filter now matches assignee relation IDs and excludes completed states;
+  comparing the multi-select relation itself silently returned no tasks.
 
 ## [1.0.2] - 2026-07-30
 

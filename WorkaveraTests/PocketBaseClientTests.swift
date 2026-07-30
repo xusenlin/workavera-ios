@@ -1059,7 +1059,7 @@ final class PocketBaseClientTests: XCTestCase {
                 XCTAssertEqual(query["perPage"], "200")
                 XCTAssertEqual(
                     query["filter"],
-                    "due_date != \"\" && archived = false && assignees.id ?= \"user-1\""
+                    "state.category != \"completed\" && due_date != \"\" && archived = false && assignees.id ?= \"user-1\""
                 )
                 XCTAssertEqual(query["sort"], "due_date")
                 XCTAssertEqual(query["expand"], "project,state")

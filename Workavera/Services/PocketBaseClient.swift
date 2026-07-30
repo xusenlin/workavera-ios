@@ -1270,7 +1270,7 @@ struct PocketBaseClient {
         )
         async let tasksRequest: [CalendarTaskDeadline] = listAllRecords(
             collection: "board_tasks",
-            filter: "due_date != \"\" && archived = false && assignees.id ?= \"\(userID)\"",
+            filter: "state.category != \"completed\" && due_date != \"\" && archived = false && assignees.id ?= \"\(userID)\"",
             sort: "due_date",
             expand: "project,state",
             token: token
