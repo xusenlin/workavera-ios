@@ -2,6 +2,11 @@
 
 The native iOS client for Workavera, a self-hosted AI workspace. Its modules and interaction patterns follow the Workavera web app.
 
+**This version needs a Workavera server on 0.0.10 or newer**, because task
+archiving reads a field added in that release. Upgrade the server first. The
+[server README](https://github.com/xusenlin/workavera#server-compatibility)
+carries the full version table.
+
 The app does not provide account registration or automatic account creation.
 Sign-in accounts are provisioned and managed by the administrator of each
 self-hosted Workavera server.
