@@ -1462,8 +1462,9 @@ struct PocketBaseClient {
         )
     }
 
-    func archiveBoardTask(
+    func setBoardTaskArchived(
         id: String,
+        archived: Bool,
         token: String
     ) async throws -> BoardTaskArchiveResponse {
         struct Body: Encodable {
@@ -1472,8 +1473,46 @@ struct PocketBaseClient {
         return try await sendJSON(
             path: "/api/collections/board_tasks/records/\(id)",
             method: "PATCH",
-            body: Body(archived: true),
+            body: Body(archived: archived),
             token: token
+        )
+    }
+
+    /// Archived tasks of one project, newest first. They are excluded from
+    /// `getBoardPage`, so the sheet listing them pages on its own.
+    func getArchivedBoardTasks(
+        projectID: String,
+        page: Int,
+        pageSize: Int,
+        token: String
+    ) async throws -> ArchivedBoardTaskPage {
+        let response: RecordListResponse<ArchivedBoardTaskRecord> = try await send(
+            path: "/api/collections/board_tasks/records",
+            method: "GET",
+            queryItems: [
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "perPage", value: String(pageSize)),
+                URLQueryItem(name: "sort", value: "-updated"),
+                URLQueryItem(name: "expand", value: "state"),
+                URLQueryItem(
+                    name: "filter",
+                    value: "project = \"\(Self.filterLiteral(projectID))\" && archived = true"
+                ),
+            ],
+            token: token
+        )
+        return ArchivedBoardTaskPage(
+            tasks: response.items.map { record in
+                ArchivedBoardTask(
+                    id: record.id,
+                    title: record.title,
+                    description: record.description,
+                    stateName: record.expand?.state?.name ?? ""
+                )
+            },
+            page: response.page,
+            totalPages: max(1, response.totalPages),
+            totalItems: response.totalItems
         )
     }
 

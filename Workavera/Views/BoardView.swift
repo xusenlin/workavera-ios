@@ -7,6 +7,7 @@ struct BoardView: View {
     @Environment(BoardStore.self) private var board
     @State private var selectedTask: BoardTask?
     @State private var showProjectSwitcher = false
+    @State private var showArchivedTasks = false
 
     private var selectedProject: BoardProject? {
         board.projects.first { $0.id == board.selectedProjectID } ?? board.projects.first
@@ -27,6 +28,17 @@ struct BoardView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Board")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showArchivedTasks = true
+                } label: {
+                    Image(systemName: "archivebox")
+                }
+                .disabled(selectedProject == nil)
+                .accessibilityLabel("Archived tasks")
+            }
+        }
         .task(id: auth.user?.id) {
             await board.loadForPresentation(using: auth)
         }
@@ -47,6 +59,11 @@ struct BoardView: View {
                 withAnimation(.easeInOut(duration: 0.15)) {
                     board.selectProject(project)
                 }
+            }
+        }
+        .sheet(isPresented: $showArchivedTasks) {
+            if let project = selectedProject {
+                ArchivedTasksSheet(project: project)
             }
         }
         .sheet(item: $selectedTask) { task in
@@ -255,6 +272,142 @@ private struct ProjectSwitcherSheet: View {
         Binding(
             get: { page },
             set: { onPage($0) }
+        )
+    }
+}
+
+// MARK: - Archived tasks (list and restore for the current project)
+
+private struct ArchivedTasksSheet: View {
+    let project: BoardProject
+
+    @Environment(AuthStore.self) private var auth
+    @Environment(BoardStore.self) private var board
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if board.isLoadingArchived, !board.hasLoadedArchived {
+                    ProgressView("Loading archived tasks…")
+                } else if board.archivedTasks.isEmpty {
+                    ContentUnavailableView(
+                        "No Archived Tasks",
+                        systemImage: "archivebox",
+                        description: Text("Tasks you archive appear here.")
+                    )
+                } else {
+                    ScrollView {
+                        if let error = board.archivedErrorMessage {
+                            InlineErrorBanner(message: error) {
+                                Task { await load() }
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                        }
+
+                        LazyVStack(spacing: 12) {
+                            ForEach(board.archivedTasks) { task in
+                                row(task)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                    }
+                    .refreshable { await load() }
+                }
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Archived Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // Two-line inline title naming the project the list belongs to.
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text("Archived Tasks")
+                            .font(.headline)
+                        Text(project.name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if board.hasLoadedArchived, board.archivedTotalItems > 0 {
+                    VStack(spacing: 0) {
+                        Divider()
+                        PaginationBar(
+                            pageCount: board.archivedTotalPages,
+                            page: pageBinding,
+                            alwaysVisible: true
+                        )
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                    }
+                    .background(.bar)
+                }
+            }
+            .task { await load() }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func row(_ task: ArchivedBoardTask) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(task.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitle(for: task))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if board.restoringTaskIDs.contains(task.id) {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 30, height: 30)
+            } else {
+                Button {
+                    Task { await board.restoreTask(task, using: auth) }
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!board.restoringTaskIDs.isEmpty)
+                .accessibilityLabel("Restore \(task.title)")
+            }
+        }
+        .padding(14)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+
+    /// The state a restored task returns to, plus its description when it has one.
+    private func subtitle(for task: ArchivedBoardTask) -> String {
+        let state = task.stateName.isEmpty ? "Original state" : task.stateName
+        return task.description.isEmpty ? state : "\(state) · \(task.description)"
+    }
+
+    private func load(page: Int? = nil) async {
+        await board.loadArchivedTasks(for: project.id, page: page, using: auth)
+    }
+
+    private var pageBinding: Binding<Int> {
+        Binding(
+            get: { board.archivedPage },
+            set: { page in
+                Task { await load(page: page) }
+            }
         )
     }
 }

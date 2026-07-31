@@ -817,13 +817,80 @@ final class PocketBaseClientTests: XCTestCase {
             )
         }
 
-        let archived = try await makeClient().archiveBoardTask(
+        let archived = try await makeClient().setBoardTaskArchived(
             id: "task-1",
+            archived: true,
             token: "token-value"
         )
 
         XCTAssertEqual(archived.id, "task-1")
         XCTAssertTrue(archived.archived)
+    }
+
+    func testRestoreBoardTaskClearsTheArchivedFlag() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.url?.path, "/api/collections/board_tasks/records/task-1")
+            let fields = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Self.bodyData(from: request)) as? [String: Bool]
+            )
+            XCTAssertEqual(fields, ["archived": false])
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"id":"task-1","archived":false}"#.utf8)
+            )
+        }
+
+        let restored = try await makeClient().setBoardTaskArchived(
+            id: "task-1",
+            archived: false,
+            token: "token-value"
+        )
+
+        XCTAssertEqual(restored.id, "task-1")
+        XCTAssertFalse(restored.archived)
+    }
+
+    func testGetArchivedBoardTasksFiltersByProjectAndExpandsTheState() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/collections/board_tasks/records")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "token-value")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+            let value: (String) -> String? = { name in
+                query?.first { $0.name == name }?.value
+            }
+            XCTAssertEqual(value("filter"), "project = \"project-1\" && archived = true")
+            XCTAssertEqual(value("expand"), "state")
+            XCTAssertEqual(value("page"), "1")
+            XCTAssertEqual(value("perPage"), "10")
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(#"""
+                {"page":1,"totalPages":2,"totalItems":11,"items":[
+                  {"id":"task-1","title":"Ship the release","description":"Tag and package",
+                   "expand":{"state":{"id":"state-1","project":"project-1","name":"Done","color":"#22c55e","category":"completed","sort_order":3}}},
+                  {"id":"task-2","title":"Untangle the cache","description":""}
+                ]}
+                """#.utf8)
+            )
+        }
+
+        let page = try await makeClient().getArchivedBoardTasks(
+            projectID: "project-1",
+            page: 1,
+            pageSize: 10,
+            token: "token-value"
+        )
+
+        XCTAssertEqual(page.page, 1)
+        XCTAssertEqual(page.totalPages, 2)
+        XCTAssertEqual(page.totalItems, 11)
+        XCTAssertEqual(page.tasks.map(\.id), ["task-1", "task-2"])
+        XCTAssertEqual(page.tasks.first?.title, "Ship the release")
+        XCTAssertEqual(page.tasks.first?.stateName, "Done")
+        // A task whose state is gone still lists, with an empty state name.
+        XCTAssertEqual(page.tasks.last?.stateName, "")
     }
 
     func testLLMModelManagementAndSharingUseProtectedRoutes() async throws {

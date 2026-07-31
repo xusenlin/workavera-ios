@@ -108,6 +108,22 @@ struct BoardPage: Equatable {
     let totalItems: Int
 }
 
+/// One archived task, as listed in the Board's archived-tasks sheet. Archived
+/// tasks are excluded from `BoardPage`, so they carry only what the list shows.
+struct ArchivedBoardTask: Identifiable, Equatable {
+    let id: String
+    var title: String
+    var description: String
+    var stateName: String
+}
+
+struct ArchivedBoardTaskPage: Equatable {
+    let tasks: [ArchivedBoardTask]
+    let page: Int
+    let totalPages: Int
+    let totalItems: Int
+}
+
 // MARK: - PocketBase records
 
 struct BoardUserRecord: Decodable {
@@ -233,6 +249,27 @@ struct BoardTaskRecord: Decodable {
         documentIDs = try container.decodeIfPresent([String].self, forKey: .documents) ?? []
         dueDate = try container.decodeIfPresent(String.self, forKey: .dueDate) ?? ""
         rank = try container.decodeIfPresent(Double.self, forKey: .rank) ?? 0
+    }
+}
+
+struct ArchivedBoardTaskRecord: Decodable {
+    struct Expansion: Decodable { let state: BoardStateRecord? }
+
+    let id: String
+    let title: String
+    let description: String
+    let expand: Expansion?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, description, expand
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        expand = try container.decodeIfPresent(Expansion.self, forKey: .expand)
     }
 }
 

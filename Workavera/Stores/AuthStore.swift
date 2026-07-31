@@ -811,7 +811,26 @@ final class AuthStore {
 
     func archiveBoardTask(id: String) async throws {
         guard let token else { throw sessionUnavailableError }
-        _ = try await makeClient().archiveBoardTask(id: id, token: token)
+        _ = try await makeClient().setBoardTaskArchived(id: id, archived: true, token: token)
+    }
+
+    func restoreBoardTask(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        _ = try await makeClient().setBoardTaskArchived(id: id, archived: false, token: token)
+    }
+
+    func loadArchivedBoardTasks(
+        projectID: String,
+        page: Int,
+        pageSize: Int
+    ) async throws -> ArchivedBoardTaskPage {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getArchivedBoardTasks(
+            projectID: projectID,
+            page: page,
+            pageSize: pageSize,
+            token: token
+        )
     }
 
     private func load<Value>(

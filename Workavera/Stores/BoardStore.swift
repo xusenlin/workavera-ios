@@ -5,6 +5,7 @@ import Observation
 @Observable
 final class BoardStore {
     static let projectsPerPage = 4
+    static let archivedTasksPerPage = 10
     private static let selectionCachePrefix = "workavera.board.selection:"
 
     private(set) var projects: [BoardProject] = []
@@ -19,8 +20,20 @@ final class BoardStore {
     private(set) var updatingTaskIDs: Set<String> = []
     private(set) var isRealtimeConnected = false
 
+    /// Archived tasks of one project, paged separately from the board itself.
+    private(set) var archivedTasks: [ArchivedBoardTask] = []
+    private(set) var archivedProjectID: String?
+    private(set) var archivedPage = 0
+    private(set) var archivedTotalPages = 1
+    private(set) var archivedTotalItems = 0
+    private(set) var isLoadingArchived = false
+    private(set) var hasLoadedArchived = false
+    private(set) var archivedErrorMessage: String?
+    private(set) var restoringTaskIDs: Set<String> = []
+
     private let defaults: UserDefaults
     private var loadSequence = 0
+    private var archivedLoadSequence = 0
     private var cachedIdentity: String?
     private var selectionCacheKey: String?
     private var selectedProjectPage: Int?
@@ -43,6 +56,7 @@ final class BoardStore {
         errorMessage = nil
         updatingTaskIDs = []
         isRealtimeConnected = false
+        resetArchived()
         cachedIdentity = nil
         selectionCacheKey = nil
         selectedProjectPage = nil
@@ -230,6 +244,82 @@ final class BoardStore {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    /// Loads one page of a project's archived tasks. Switching projects starts
+    /// the list over rather than paging into the previous project's results.
+    func loadArchivedTasks(
+        for projectID: String,
+        page requestedPage: Int? = nil,
+        using auth: AuthStore
+    ) async {
+        if archivedProjectID != projectID {
+            resetArchived()
+            archivedProjectID = projectID
+        }
+        let targetPage = max(0, requestedPage ?? archivedPage)
+        archivedLoadSequence += 1
+        let sequence = archivedLoadSequence
+        isLoadingArchived = true
+        defer {
+            if sequence == archivedLoadSequence { isLoadingArchived = false }
+        }
+
+        do {
+            let snapshot = try await auth.loadArchivedBoardTasks(
+                projectID: projectID,
+                page: targetPage + 1,
+                pageSize: Self.archivedTasksPerPage
+            )
+            guard sequence == archivedLoadSequence, archivedProjectID == projectID else { return }
+            archivedTasks = snapshot.tasks
+            archivedPage = max(0, snapshot.page - 1)
+            archivedTotalPages = max(1, snapshot.totalPages)
+            archivedTotalItems = snapshot.totalItems
+            hasLoadedArchived = true
+            archivedErrorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            guard sequence == archivedLoadSequence else { return }
+            hasLoadedArchived = true
+            archivedErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// Restores an archived task to the state it was archived from, then
+    /// reloads both the archived list and the board it reappears on.
+    func restoreTask(_ task: ArchivedBoardTask, using auth: AuthStore) async -> Bool {
+        guard !restoringTaskIDs.contains(task.id), let projectID = archivedProjectID else {
+            return false
+        }
+        restoringTaskIDs.insert(task.id)
+        defer { restoringTaskIDs.remove(task.id) }
+
+        do {
+            try await auth.restoreBoardTask(id: task.id)
+            // Step back a page when the last remaining entry on it was restored.
+            let nextPage = archivedTasks.count == 1 ? max(0, archivedPage - 1) : archivedPage
+            await loadArchivedTasks(for: projectID, page: nextPage, using: auth)
+            await refresh(using: auth)
+            return true
+        } catch {
+            archivedErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func resetArchived() {
+        archivedLoadSequence += 1
+        archivedTasks = []
+        archivedProjectID = nil
+        archivedPage = 0
+        archivedTotalPages = 1
+        archivedTotalItems = 0
+        isLoadingArchived = false
+        hasLoadedArchived = false
+        archivedErrorMessage = nil
+        restoringTaskIDs = []
     }
 
     func clearError() {

@@ -10,6 +10,13 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+### Added
+
+- Board carries an archive button in its toolbar, opening the archived tasks
+  of the project named in the panel's title. Each task lists the state it
+  would return to and restores from there, so one archived by mistake is no
+  longer out of reach on the phone.
+
 ### Fixed
 
 - Chat approval cards show their approve and reject buttons while the current
