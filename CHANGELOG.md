@@ -10,6 +10,8 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-04
+
 ### Added
 
 - Board carries an archive button in its toolbar, opening the archived tasks
@@ -99,6 +101,7 @@ release adds. Upgrade the server first.
   blocks on the answer, so it is exempt from the throttle.
 - Approval tool cards stay expanded while a decision is pending.
 
-[Unreleased]: https://github.com/xusenlin/workavera-ios/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/xusenlin/workavera-ios/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/xusenlin/workavera-ios/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/xusenlin/workavera-ios/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/xusenlin/workavera-ios/releases/tag/v1.0.1
