@@ -1,5 +1,6 @@
 import MarkdownUI
 import SwiftUI
+import UIKit
 
 struct DocsView: View {
     @Environment(AuthStore.self) private var auth
@@ -480,9 +481,22 @@ private struct DocumentDetailView: View {
     @Environment(DocsStore.self) private var docs
     let documentID: String
     @State private var showVersions = false
+    @State private var showShare = false
 
     private var document: WorkspaceDocument? {
         docs.documentCache[documentID]
+    }
+
+    /// Archiving already takes a public link out of service, and the server
+    /// refuses to publish an archived document, so the action is offered only
+    /// where it can do something.
+    private var canShare: Bool {
+        guard let document, let userID = auth.user?.id else { return false }
+        return document.status == .draft && document.ownerID == userID
+    }
+
+    private var isShared: Bool {
+        docs.shares[documentID] != nil
     }
 
     var body: some View {
@@ -504,6 +518,20 @@ private struct DocumentDetailView: View {
         .navigationTitle(document?.title ?? "Document")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if canShare {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showShare = true
+                    } label: {
+                        // Tinted while a link is live, as in the web app: the
+                        // fact that a document is public belongs on the
+                        // document, not only inside the sheet that made it so.
+                        Image(systemName: isShared ? "link" : "square.and.arrow.up")
+                            .foregroundStyle(isShared ? Color.green : Color.accentColor)
+                    }
+                    .accessibilityLabel(isShared ? "Shared publicly" : "Share document")
+                }
+            }
             if document != nil {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -518,9 +546,20 @@ private struct DocumentDetailView: View {
         .task {
             await docs.loadDocument(id: documentID, using: auth)
         }
+        .task(id: canShare) {
+            // Only decides how the toolbar reads, so a failure here stays
+            // quiet; opening the sheet retries and reports it properly.
+            guard canShare, !docs.resolvedShareIDs.contains(documentID) else { return }
+            try? await docs.loadShare(id: documentID, using: auth)
+        }
         .sheet(isPresented: $showVersions) {
             if let document {
                 DocumentVersionsView(document: document)
+            }
+        }
+        .sheet(isPresented: $showShare) {
+            if let document {
+                DocumentShareView(document: document)
             }
         }
     }
@@ -532,7 +571,11 @@ private struct DocumentDetailView: View {
     private func documentContent(_ document: WorkspaceDocument) -> some View {
         Group {
             if document.kind == .html {
+                // Reaches the screen edges the way the markdown ScrollView
+                // below does; without this the web view is laid out inside the
+                // safe area and the document stops at a seam under the bar.
                 HTMLView(html: document.content)
+                    .ignoresSafeArea(edges: .vertical)
             } else {
                 ScrollView {
                     MarkdownDocumentView(content: document.content)
@@ -567,9 +610,248 @@ private struct MarkdownDocumentView: View {
                 .padding(.vertical, 50)
         } else {
             Markdown(content)
-                .workspaceMarkdownCodeStyle()
+                .workspaceDocumentMarkdownStyle()
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Publishes a document to a public link (web app ShareDocumentButton).
+/// Publishing pins the revision the link serves, so the snapshot stays where it
+/// is while editing continues; changing the expiry leaves it alone and only
+/// "Publish Latest" moves it.
+private struct DocumentShareView: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(DocsStore.self) private var docs
+    let document: WorkspaceDocument
+
+    /// The store owns the link, so the toolbar behind this sheet reflects
+    /// publishing and revoking without being told twice.
+    private var share: DocumentShare? { docs.shares[document.id] }
+    private var hasLoaded: Bool { docs.resolvedShareIDs.contains(document.id) }
+
+    @State private var expiry: DocumentShareExpiry = .never
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+    @State private var copied = false
+    // Publishing roughly triples the height of the sheet. Left at .medium it
+    // would hide the link it just created below the fold, so the sheet grows
+    // with what it has to show.
+    @State private var detent: PresentationDetent = .medium
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(
+                        """
+                        Anyone with the link can read this document without \
+                        signing in. The link serves the revision you publish, \
+                        so later edits stay private until you publish again.
+                        """
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+
+                if let errorMessage {
+                    InlineErrorListSection(message: errorMessage) {
+                        Task { await load() }
+                    }
+                }
+
+                if !hasLoaded {
+                    Section { ProgressView("Loading link…") }
+                } else if let share {
+                    linkSection(share)
+                    revisionSection(share)
+                    expirySection
+                    Section {
+                        Button(role: .destructive) {
+                            Task { await revoke() }
+                        } label: {
+                            Text("Revoke Link").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .tint(.red)
+                        .disabled(isWorking)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                    }
+                } else {
+                    expirySection
+                    Section {
+                        Button {
+                            Task { await publish(republish: false, expiry: expiry) }
+                        } label: {
+                            Text(isWorking ? "Creating…" : "Create Link")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(isWorking)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                    }
+                }
+            }
+            .navigationTitle("Share Document")
+            .navigationBarTitleDisplayMode(.inline)
+            .task { await load() }
+        }
+        .presentationDetents([.medium, .large], selection: $detent)
+    }
+
+    @ViewBuilder
+    private func linkSection(_ share: DocumentShare) -> some View {
+        Section("Public Link") {
+            if let url = auth.publicDocumentURL(for: share) {
+                Text(url.absoluteString)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
+                Button {
+                    copy(url)
+                } label: {
+                    Label(
+                        copied ? "Copied" : "Copy Link",
+                        systemImage: copied ? "checkmark" : "doc.on.doc"
+                    )
+                    .foregroundStyle(copied ? Color.green : Color.accentColor)
+                }
+                ShareLink(item: url) {
+                    Label("Share Link", systemImage: "square.and.arrow.up")
+                }
+            } else {
+                Text("The server address could not be read.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func revisionSection(_ share: DocumentShare) -> some View {
+        Section {
+            LabeledContent("Published revision", value: "\(share.revision)")
+            if share.revision < document.revision {
+                Button("Publish Latest") {
+                    Task { await publish(republish: true, expiry: expiry) }
+                }
+                .disabled(isWorking)
+            }
+        } footer: {
+            Text(
+                share.revision < document.revision
+                    ? "The document is at revision \(document.revision). Publish to move the link to it."
+                    : "The link serves the newest revision."
+            )
+        }
+    }
+
+    private var expirySection: some View {
+        Section {
+            Picker("Expires", selection: expirySelection) {
+                ForEach(expiryOptions) { option in
+                    Text(label(for: option)).tag(option)
+                }
+            }
+            .disabled(isWorking)
+        }
+    }
+
+    /// Changing the expiry of a published link takes effect at once, matching
+    /// the web app; before there is a link it only stages the choice.
+    private var expirySelection: Binding<DocumentShareExpiry> {
+        Binding(get: { expiry }, set: { option in
+            expiry = option
+            if share != nil {
+                Task { await publish(republish: false, expiry: option) }
+            }
+        })
+    }
+
+    /// "Keep" is offered only for a link that already expires, so every other
+    /// change to it leaves that date where the creator set it.
+    private var expiryOptions: [DocumentShareExpiry] {
+        DocumentShareExpiry.allCases.filter { $0 != .keep || share?.expiresAt != nil }
+    }
+
+    private func label(for option: DocumentShareExpiry) -> String {
+        guard option == .keep, let expiresAt = share?.expiresAt else { return option.label }
+        return "Keep \(expiresAt.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    /// The label carries its own confirmation, the way the code-block copy
+    /// button does: a sheet this small has nowhere to put a banner.
+    private func copy(_ url: URL) {
+        UIPasteboard.general.string = url.absoluteString
+        withAnimation { copied = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation { copied = false }
+        }
+    }
+
+    private func load() async {
+        errorMessage = nil
+        // The toolbar may already have resolved the link, so open at the right
+        // size instead of growing once the refresh lands.
+        syncToShare(animated: false)
+        do {
+            try await docs.loadShare(id: document.id, using: auth)
+            syncToShare()
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func publish(republish: Bool, expiry option: DocumentShareExpiry) async {
+        guard !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await docs.publishShare(
+                id: document.id,
+                expires: option.requestValue(share: share),
+                republish: republish,
+                using: auth
+            )
+            syncToShare()
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func revoke() async {
+        guard !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await docs.revokeShare(id: document.id, using: auth)
+            syncToShare()
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Brings the picker and the sheet's height in line with the link the
+    /// store now holds.
+    private func syncToShare(animated: Bool = true) {
+        expiry = share?.expiresAt == nil ? .never : .keep
+        let target: PresentationDetent = share == nil ? .medium : .large
+        if animated {
+            withAnimation { detent = target }
+        } else {
+            detent = target
         }
     }
 }
@@ -676,6 +958,7 @@ private struct DocumentVersionDetailView: View {
             if let version {
                 if kind == .html {
                     HTMLView(html: version.content ?? "")
+                        .ignoresSafeArea(edges: .vertical)
                 } else {
                     ScrollView {
                         MarkdownDocumentView(content: version.content ?? "")

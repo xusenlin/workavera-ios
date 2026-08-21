@@ -10,6 +10,38 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+Needs a Workavera server on 0.1.0 or newer: public document links are served by
+endpoints that release adds. Upgrade the server first.
+
+### Added
+
+- A document you own carries a share button in its toolbar, publishing it to a
+  link anyone can open in a browser without an account, with no expiry or one
+  7 or 30 days out. The link serves the revision you publish and stays on it
+  while you keep editing, so a draft is never exposed by accident; "Publish
+  Latest" moves it forward and "Revoke Link" takes it out of service for good.
+  Archived documents have no share button, because archiving already makes
+  their link unavailable.
+
+### Changed
+
+- A markdown document reads at the web reader's type scale: headings that open
+  a section, blocks packed tight and carried by a generous line height, the
+  editor's list indent, and quotes marked by a bar rather than italics.
+  MarkdownUI's defaults are tuned for chat-sized messages, which left a
+  document loose and its headings barely lifted off the text. Chat is
+  unchanged. Headings 1 and 2 sit below the web scale on purpose: 3em and 2em
+  are set for a wide column and leave a phone title a few characters to a line.
+- A table in a document is a soft rounded block with light rules between rows,
+  matching the web reader, instead of a full spreadsheet grid.
+
+### Fixed
+
+- An HTML document fills the screen and scrolls under the navigation bar the
+  way a markdown one does. It was laid out inside the safe area, so it stopped
+  at a seam under the bar, and the strip the bar left clear fell through to the
+  app's background and read as a colour break above the document.
+
 ## [1.0.3] - 2026-08-04
 
 ### Added

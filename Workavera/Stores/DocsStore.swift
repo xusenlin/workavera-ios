@@ -19,6 +19,11 @@ final class DocsStore {
     private(set) var hasLoaded = false
     private(set) var errorMessage: String?
     private(set) var documentCache: [String: WorkspaceDocument] = [:]
+    /// Public link of each document that has one. A document listed in
+    /// `resolvedShareIDs` but absent here is known not to be shared, which is
+    /// what lets the toolbar tell "no link" apart from "not checked yet".
+    private(set) var shares: [String: DocumentShare] = [:]
+    private(set) var resolvedShareIDs: Set<String> = []
     private(set) var loadingDocumentIDs: Set<String> = []
     private(set) var pinningDocumentIDs: Set<String> = []
     private(set) var mutatingDocumentIDs: Set<String> = []
@@ -47,6 +52,8 @@ final class DocsStore {
         hasLoaded = false
         errorMessage = nil
         documentCache = [:]
+        shares = [:]
+        resolvedShareIDs = []
         loadingDocumentIDs = []
         pinningDocumentIDs = []
         mutatingDocumentIDs = []
@@ -209,6 +216,7 @@ final class DocsStore {
         do {
             try await auth.setDocumentArchived(id: id, archived: archived)
             documentCache.removeValue(forKey: id)
+            forgetShare(id: id)
             await refresh(using: auth)
         } catch {
             errorMessage = error.localizedDescription
@@ -224,12 +232,53 @@ final class DocsStore {
         do {
             try await auth.deleteDocument(id: id)
             documentCache.removeValue(forKey: id)
+            forgetShare(id: id)
             await refresh(using: auth)
             return true
         } catch {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    // Share state is never cached to disk: a stale link would be shown as live
+    // long after it was revoked or moved to another revision.
+
+    func loadShare(id: String, using auth: AuthStore) async throws {
+        applyShare(try await auth.loadDocumentShare(id: id), for: id)
+    }
+
+    @discardableResult
+    func publishShare(
+        id: String,
+        expires: String,
+        republish: Bool,
+        using auth: AuthStore
+    ) async throws -> DocumentShare {
+        let share = try await auth.publishDocument(
+            id: id,
+            expires: expires,
+            republish: republish
+        )
+        applyShare(share, for: id)
+        return share
+    }
+
+    func revokeShare(id: String, using auth: AuthStore) async throws {
+        try await auth.unpublishDocument(id: id)
+        applyShare(nil, for: id)
+    }
+
+    private func applyShare(_ share: DocumentShare?, for id: String) {
+        shares[id] = share
+        resolvedShareIDs.insert(id)
+    }
+
+    /// Drops what is known about a link rather than declaring it gone: after
+    /// archiving or deleting, the next document that needs it asks the server.
+    private func forgetShare(id: String) {
+        shares.removeValue(forKey: id)
+        resolvedShareIDs.remove(id)
     }
 
     func locationName(for document: DocumentSummary) -> String {

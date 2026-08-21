@@ -4,6 +4,11 @@ import WebKit
 /// A read-only HTML renderer with JavaScript and in-document anchors.
 /// It fills the screen and owns its scrolling, so a document with sticky elements
 /// of its own has a full viewport to lay them out against. External links are blocked.
+///
+/// Host it with `.ignoresSafeArea(edges: .vertical)`: the web view then reaches
+/// the screen edges the way a SwiftUI `ScrollView` does, and its own scroll view
+/// carries the inset, so the document starts below the navigation bar and
+/// scrolls under it instead of stopping at a seam.
 struct HTMLView: UIViewRepresentable {
     let html: String
 
@@ -18,13 +23,18 @@ struct HTMLView: UIViewRepresentable {
         configuration.defaultWebpagePreferences = preferences
         configuration.websiteDataStore = .nonPersistent()
 
+        // Left transparent, the strip the content inset keeps clear behind the
+        // navigation bar fell through to the app's background and read as a
+        // seam above the document. Opaque, WebKit paints the page's own
+        // background across the whole view instead, bar included.
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = true
         webView.scrollView.alwaysBounceHorizontal = false
         webView.scrollView.isDirectionalLockEnabled = true
+        // .automatic leaves the decision to UIKit heuristics that do not apply
+        // to a web view hosted inside SwiftUI; .always is what keeps the
+        // document clear of the bars once the frame reaches under them.
+        webView.scrollView.contentInsetAdjustmentBehavior = .always
         webView.navigationDelegate = context.coordinator
         return webView
     }
@@ -54,6 +64,9 @@ struct HTMLView: UIViewRepresentable {
                 margin: 0;
                 padding: 0;
                 color: #1c1c1e;
+                /* The page needs a background of its own now that the view is
+                   opaque; a document that declares one overrides this. */
+                background: #ffffff;
                 overflow-wrap: break-word;
             }
             img { max-width: 100%; height: auto; }
@@ -74,7 +87,7 @@ struct HTMLView: UIViewRepresentable {
                 -webkit-overflow-scrolling: touch;
             }
             @media (prefers-color-scheme: dark) {
-                body { color: #f2f2f7; }
+                body { color: #f2f2f7; background: #000000; }
             }
         </style>
         </head>

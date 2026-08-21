@@ -577,6 +577,42 @@ final class AuthStore {
         try await makeClient().deleteDocument(id: id, token: token)
     }
 
+    // Share state is never cached: a stale link would be shown as live long
+    // after it was revoked or moved to another revision.
+
+    func loadDocumentShare(id: String) async throws -> DocumentShare? {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getDocumentShare(id: id, token: token)
+    }
+
+    func publishDocument(
+        id: String,
+        expires: String,
+        republish: Bool
+    ) async throws -> DocumentShare {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().publishDocument(
+            id: id,
+            expires: expires,
+            republish: republish,
+            token: token
+        )
+    }
+
+    func unpublishDocument(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().unpublishDocument(id: id, token: token)
+    }
+
+    /// Public address of a link, as a reader would open it in a browser.
+    func publicDocumentURL(for share: DocumentShare) -> URL? {
+        guard let base = try? ServerConfiguration(
+            address: serverAddress,
+            allowInsecureHTTP: allowInsecureHTTP
+        ).baseURL else { return nil }
+        return base.appending(path: "s/\(share.slug)")
+    }
+
     func loadAPIKeys(strategy: DataLoadStrategy = .networkOnly) async throws -> [WorkaveraAPIKey] {
         guard let token else { throw sessionUnavailableError }
         return try await load(strategy: strategy) { client in

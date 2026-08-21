@@ -976,6 +976,55 @@ struct PocketBaseClient {
         )
     }
 
+    /// The public link of a document, or nil when it has none: the endpoint
+    /// answers a bare `null` instead of a 404, so "not shared" is a state
+    /// rather than a failure and cannot be confused with a missing document.
+    func getDocumentShare(id: String, token: String) async throws -> DocumentShare? {
+        let data = try await perform(
+            path: "/api/docs/\(id)/share",
+            method: "GET",
+            token: token
+        )
+        let body = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, body != "null" else { return nil }
+        do {
+            return try JSONDecoder().decode(DocumentShare.self, from: data)
+        } catch {
+            throw APIError.decoding(error.localizedDescription)
+        }
+    }
+
+    /// Publishes the document, or updates the link it already has.
+    /// `republish` moves the link to the document's current revision; without
+    /// it only the expiry changes, so adjusting a date can never expose an
+    /// unfinished draft.
+    func publishDocument(
+        id: String,
+        expires: String,
+        republish: Bool,
+        token: String
+    ) async throws -> DocumentShare {
+        struct Body: Encodable {
+            let expires: String
+            let republish: Bool
+        }
+        return try await sendJSON(
+            path: "/api/docs/\(id)/share",
+            method: "POST",
+            body: Body(expires: expires, republish: republish),
+            token: token
+        )
+    }
+
+    func unpublishDocument(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/docs/\(id)/share",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func getAPIKeys(token: String) async throws -> [WorkaveraAPIKey] {
         try await listAllRecords(
             collection: "api_keys",
