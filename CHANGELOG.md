@@ -10,6 +10,8 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-09-04
+
 Needs a Workavera server on 0.1.1 or newer: task start dates, public project
 links, and subscription discovery are served by endpoints and fields that
 release adds. Upgrade the server first.
@@ -33,6 +35,9 @@ release adds. Upgrade the server first.
   into English, 中文, or 日本語 first, and only the ones you keep become
   reading items, carrying the summary along. A subscription that fails to fetch
   reports its own error instead of emptying the panel.
+- Tapping a notification opens a detail sheet with its full title and body —
+  the list row keeps both truncated — and a model share is accepted or
+  rejected from there.
 - The share sheet of a published document can open its public link in the
   browser, so checking what a reader actually sees no longer means pasting the
   link somewhere first.
@@ -46,6 +51,8 @@ release adds. Upgrade the server first.
 
 ### Changed
 
+- The application logo is now Workavera's arced W with a floating dot,
+  replacing the previous robot mark across the app icon and in-app branding.
 - A markdown document reads at the web reader's type scale: headings that open
   a section, blocks packed tight and carried by a generous line height, the
   editor's list indent, and quotes marked by a bar rather than italics.
@@ -154,7 +161,8 @@ release adds. Upgrade the server first.
   blocks on the answer, so it is exempt from the throttle.
 - Approval tool cards stay expanded while a decision is pending.
 
-[Unreleased]: https://github.com/xusenlin/workavera-ios/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/xusenlin/workavera-ios/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/xusenlin/workavera-ios/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/xusenlin/workavera-ios/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/xusenlin/workavera-ios/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/xusenlin/workavera-ios/releases/tag/v1.0.1
