@@ -3,11 +3,13 @@ import SwiftUI
 struct ReadingView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(ReadingStore.self) private var store
+    @Environment(ReadingDiscoverStore.self) private var discover
 
     @State private var searchInput = ""
     @State private var selectedItem: ReadingItem?
     @State private var deleteTarget: ReadingItem?
     @State private var showAddSheet = false
+    @State private var showDiscoverSheet = false
 
     var body: some View {
         CachedContentView(
@@ -48,19 +50,10 @@ struct ReadingView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if store.unreadCount > 0 {
-                    Button {
-                        Task { await store.markAllRead(using: auth) }
-                    } label: {
-                        if store.isMarkingAllRead {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "checkmark.circle")
-                        }
-                    }
-                    .disabled(store.isMarkingAllRead)
-                    .accessibilityLabel("Mark all as read")
+                Button { showDiscoverSheet = true } label: {
+                    Image(systemName: "sparkle.magnifyingglass")
                 }
+                .accessibilityLabel("Discover from subscriptions")
                 Button { showAddSheet = true } label: {
                     Image(systemName: "plus")
                 }
@@ -68,6 +61,8 @@ struct ReadingView: View {
             }
         }
         .task(id: auth.user?.id) {
+            // Subscriptions and candidates belong to the signed-in user.
+            discover.reset()
             await store.loadForPresentation(using: auth)
             searchInput = store.query
         }
@@ -76,6 +71,9 @@ struct ReadingView: View {
         }
         .sheet(isPresented: $showAddSheet) {
             AddReadingItemSheet()
+        }
+        .sheet(isPresented: $showDiscoverSheet) {
+            ReadingDiscoverView()
         }
         .alert("Delete reading item?", isPresented: deletePresented) {
             Button("Cancel", role: .cancel) { deleteTarget = nil }

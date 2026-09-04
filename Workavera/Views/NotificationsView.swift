@@ -5,6 +5,7 @@ struct NotificationsView: View {
     @Environment(NotificationStore.self) private var notifications
     @State private var deleteTarget: AppNotification?
     @State private var showDeleteConfirmation = false
+    @State private var selectedNotification: AppNotification?
     @State private var searchInput = ""
 
     var body: some View {
@@ -56,6 +57,9 @@ struct NotificationsView: View {
         .task(id: auth.user?.id) {
             await notifications.loadAutomatically(using: auth)
             searchInput = notifications.query
+        }
+        .sheet(item: $selectedNotification) { notification in
+            NotificationDetailSheet(notification: notification)
         }
     }
 
@@ -134,7 +138,10 @@ struct NotificationsView: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
+                    // Opening a notification reads it, same as before, and now
+                    // also shows the full text the row can only truncate.
                     Task { await notifications.markRead(notification, using: auth) }
+                    selectedNotification = notification
                 } label: {
                     notificationContent(notification)
                 }
@@ -289,4 +296,151 @@ struct NotificationsView: View {
         )
     }
 
+}
+
+// MARK: - Notification detail
+
+/// The full text of one notification. The list row truncates title and body
+/// to stay scannable; this sheet shows everything, plus the model-share
+/// actions for invitations still waiting on a decision.
+private struct NotificationDetailSheet: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(NotificationStore.self) private var notifications
+    @Environment(\.dismiss) private var dismiss
+    let notification: AppNotification
+
+    /// Reads the live copy from the store, so an accept or reject tapped here
+    /// updates the status without reopening the sheet.
+    private var current: AppNotification {
+        notifications.items.first { $0.id == notification.id } ?? notification
+    }
+
+    private var typeLabel: String {
+        switch current.type {
+        case .modelShare: "Model Share"
+        case .taskDue: "Task Reminder"
+        case .calendarEvent: "Calendar Event"
+        case .unknown: "Notification"
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 12) {
+                        Image(systemName: current.type.icon)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(current.type.color)
+                            .frame(width: 38, height: 38)
+                            .background(
+                                current.type.color.opacity(0.15),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(typeLabel)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Text(
+                                current.createdAt.formatted(
+                                    .dateTime.month(.abbreviated).day().year().hour().minute()
+                                )
+                            )
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        }
+                        Spacer(minLength: 0)
+                        if current.pinned {
+                            Image(systemName: "pin.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text(current.title)
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !current.body.isEmpty {
+                        Text(current.body)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+
+                    if current.type == .modelShare {
+                        modelShareSection
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Notification")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    @ViewBuilder
+    private var modelShareSection: some View {
+        let status = current.data.shareStatus ?? .pending
+        VStack(alignment: .leading, spacing: 10) {
+            if let modelName = current.data.modelName {
+                LabeledContent("Model", value: modelName)
+            }
+            if let senderName = current.data.senderName {
+                LabeledContent("Shared by", value: senderName)
+            }
+            if status == .pending {
+                Text("Accepting creates an independent model configuration.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button {
+                        respond(.accept)
+                    } label: {
+                        Label("Accept", systemImage: "checkmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        respond(.reject)
+                    } label: {
+                        Label("Reject", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .controlSize(.regular)
+                .disabled(notifications.isRespondingToShare(id: current.id))
+            } else {
+                Label(
+                    status == .accepted ? "Model configuration added" : "Share invitation declined",
+                    systemImage: status == .accepted ? "checkmark.circle.fill" : "xmark.circle.fill"
+                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(status == .accepted ? .green : .secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(.secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+
+    private func respond(_ decision: ModelShareDecision) {
+        Task {
+            await notifications.respondToModelShare(current, decision: decision, using: auth)
+        }
+    }
 }

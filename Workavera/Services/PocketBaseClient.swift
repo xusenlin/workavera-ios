@@ -507,6 +507,15 @@ struct PocketBaseClient {
             let description: String
             let tags: [String]
             let status: ReadingStatus
+            let summary: String
+            let keyPoints: [String]
+            let summaryLanguage: String
+
+            private enum CodingKeys: String, CodingKey {
+                case owner, url, title, description, tags, status, summary
+                case keyPoints = "key_points"
+                case summaryLanguage = "summary_language"
+            }
         }
         return try await sendJSON(
             path: "/api/collections/reading_items/records",
@@ -514,14 +523,180 @@ struct PocketBaseClient {
             body: Body(
                 owner: ownerID,
                 url: input.url,
-                title: input.title,
+                title: String(input.title.prefix(240)),
                 description: input.description,
                 tags: input.tags,
-                status: input.status
+                status: input.status,
+                summary: input.summary,
+                keyPoints: input.keyPoints,
+                summaryLanguage: input.summaryLanguage
             ),
             token: token
         )
     }
+
+    // MARK: - Reading subscriptions (discover)
+
+    /// Subscriptions live entirely on PocketBase's own CRUD; only reaching out
+    /// to them needs a route, because that is what touches the network.
+    func getReadingSources(token: String) async throws -> [ReadingSource] {
+        let records: [ReadingSourceRecord] = try await listAllRecords(
+            collection: "reading_sources",
+            filter: "",
+            sort: "name",
+            token: token
+        )
+        return records.map(\.source)
+    }
+
+    func createReadingSource(
+        ownerID: String,
+        input: ReadingSourceInput,
+        token: String
+    ) async throws {
+        struct Body: Encodable {
+            let owner: String
+            let name: String
+            let kind: ReadingSourceKind
+            let url: String
+            let params: Params?
+            let enabled: Bool
+
+            struct Params: Encodable {
+                let language: String
+                let since: TrendingSince
+            }
+        }
+        let _: ReadingSourceRecord = try await sendJSON(
+            path: "/api/collections/reading_sources/records",
+            method: "POST",
+            body: Body(
+                owner: ownerID,
+                name: input.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                kind: input.kind,
+                url: input.kind == .rss ? input.url.trimmingCharacters(in: .whitespacesAndNewlines) : "",
+                params: input.kind == .githubTrending
+                    ? Body.Params(
+                        language: input.language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                        since: input.since
+                    )
+                    : nil,
+                enabled: input.enabled
+            ),
+            token: token
+        )
+    }
+
+    func updateReadingSource(
+        id: String,
+        input: ReadingSourceInput,
+        token: String
+    ) async throws {
+        struct Body: Encodable {
+            let name: String
+            let kind: ReadingSourceKind
+            let url: String
+            let params: Params?
+            let enabled: Bool
+
+            struct Params: Encodable {
+                let language: String
+                let since: TrendingSince
+            }
+        }
+        let _: ReadingSourceRecord = try await sendJSON(
+            path: "/api/collections/reading_sources/records/\(id)",
+            method: "PATCH",
+            body: Body(
+                name: input.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                kind: input.kind,
+                url: input.kind == .rss ? input.url.trimmingCharacters(in: .whitespacesAndNewlines) : "",
+                params: input.kind == .githubTrending
+                    ? Body.Params(
+                        language: input.language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                        since: input.since
+                    )
+                    : nil,
+                enabled: input.enabled
+            ),
+            token: token
+        )
+    }
+
+    func setReadingSourceEnabled(id: String, enabled: Bool, token: String) async throws {
+        struct Body: Encodable { let enabled: Bool }
+        let _: ReadingSourceRecord = try await sendJSON(
+            path: "/api/collections/reading_sources/records/\(id)",
+            method: "PATCH",
+            body: Body(enabled: enabled),
+            token: token
+        )
+    }
+
+    func deleteReadingSource(id: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/collections/reading_sources/records/\(id)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
+    /// Reads the enabled subscriptions (or the named subset) and returns the
+    /// candidates not stored yet, plus one failure per unreachable source so a
+    /// broken feed cannot empty the panel silently.
+    func discoverReadingCandidates(
+        sourceIDs: [String],
+        token: String
+    ) async throws -> (items: [DiscoverCandidate], failures: [DiscoverFailure]) {
+        struct Body: Encodable { let sourceIds: [String] }
+        struct Response: Decodable {
+            let items: [DiscoverCandidate]?
+            let failures: [DiscoverFailure]?
+        }
+        let response: Response = try await sendJSON(
+            path: "/api/reading/discover",
+            method: "POST",
+            body: Body(sourceIds: sourceIDs),
+            token: token
+        )
+        return (response.items ?? [], response.failures ?? [])
+    }
+
+    /// Summarizes one candidate into the chosen language before anything is
+    /// kept, so a repository or article can be weighed on its summary.
+    func summarizeReadingCandidate(
+        url: String,
+        title: String,
+        language: String,
+        token: String
+    ) async throws -> CandidateSummary {
+        struct Body: Encodable {
+            let url: String
+            let title: String
+            let language: String
+        }
+        struct Response: Decodable {
+            let summary: String
+            let keyPoints: [String]?
+
+            private enum CodingKeys: String, CodingKey {
+                case summary
+                case keyPoints = "keyPoints"
+            }
+        }
+        let response: Response = try await sendJSON(
+            path: "/api/reading/discover/summarize",
+            method: "POST",
+            body: Body(url: url, title: title, language: language),
+            token: token
+        )
+        return CandidateSummary(
+            summary: response.summary,
+            keyPoints: response.keyPoints ?? [],
+            language: language
+        )
+    }
+
 
     func updateReadingStatus(
         id: String,
@@ -1511,6 +1686,71 @@ struct PocketBaseClient {
         )
     }
 
+    func updateBoardTaskStartDate(
+        id: String,
+        startDate: Date?,
+        token: String
+    ) async throws -> BoardTaskStartDateResponse {
+        struct Body: Encodable {
+            let startDate: String
+
+            private enum CodingKeys: String, CodingKey {
+                case startDate = "start_date"
+            }
+        }
+        return try await sendJSON(
+            path: "/api/collections/board_tasks/records/\(id)",
+            method: "PATCH",
+            body: Body(startDate: startDate.map(Self.dashboardDate) ?? ""),
+            token: token
+        )
+    }
+
+    // MARK: - Board project shares
+
+    /// The public link of a project, or nil when it has none: the endpoint
+    /// answers a bare `null` instead of a 404, so "not shared" is a state
+    /// rather than an error.
+    func getBoardProjectShare(projectID: String, token: String) async throws -> BoardProjectShare? {
+        let data = try await perform(
+            path: "/api/board/projects/\(projectID)/share",
+            method: "GET",
+            token: token
+        )
+        let body = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, body != "null" else { return nil }
+        do {
+            return try JSONDecoder().decode(BoardProjectShare.self, from: data)
+        } catch {
+            throw APIError.decoding(error.localizedDescription)
+        }
+    }
+
+    /// Publishes the project, or updates the expiry of its existing link. An
+    /// empty expiry means the link never expires. Only the owner may call this.
+    func publishBoardProject(
+        projectID: String,
+        expires: String,
+        token: String
+    ) async throws -> BoardProjectShare {
+        struct Body: Encodable { let expires: String }
+        return try await sendJSON(
+            path: "/api/board/projects/\(projectID)/share",
+            method: "POST",
+            body: Body(expires: expires),
+            token: token
+        )
+    }
+
+    func unpublishBoardProject(projectID: String, token: String) async throws {
+        try await sendWithoutResponse(
+            path: "/api/board/projects/\(projectID)/share",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func setBoardTaskArchived(
         id: String,
         archived: Bool,
@@ -1658,6 +1898,7 @@ struct PocketBaseClient {
                 title: record.title,
                 description: record.description,
                 priority: record.priority,
+                startDate: Self.boardDate(record.startDate),
                 dueDate: Self.boardDate(record.dueDate),
                 labels: record.labelIDs.compactMap { labelsByID[$0] },
                 assignees: record.assigneeIDs.map {

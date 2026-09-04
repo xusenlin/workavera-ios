@@ -526,7 +526,7 @@ private struct DocumentDetailView: View {
                         // Tinted while a link is live, as in the web app: the
                         // fact that a document is public belongs on the
                         // document, not only inside the sheet that made it so.
-                        Image(systemName: isShared ? "link" : "square.and.arrow.up")
+                        Image(systemName: "square.and.arrow.up")
                             .foregroundStyle(isShared ? Color.green : Color.accentColor)
                     }
                     .accessibilityLabel(isShared ? "Shared publicly" : "Share document")
@@ -722,6 +722,11 @@ private struct DocumentShareView: View {
                 }
                 ShareLink(item: url) {
                     Label("Share Link", systemImage: "square.and.arrow.up")
+                }
+                // Open the link itself, so checking what a reader actually
+                // sees does not mean pasting it somewhere first.
+                Link(destination: url) {
+                    Label("Open Link", systemImage: "safari")
                 }
             } else {
                 Text("The server address could not be read.")

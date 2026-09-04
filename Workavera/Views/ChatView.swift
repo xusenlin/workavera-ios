@@ -2151,6 +2151,10 @@ private struct BoardToolCard: View {
                                 Text(priority.label)
                             }
                         }
+                        if let startDate = task.startDate {
+                            Text(startDate)
+                                .foregroundStyle(Color(.tertiaryLabel))
+                        }
                         if let dueDate = task.dueDate {
                             Text(dueDate)
                                 .foregroundStyle(task.isOverdue ? Color.red : Color(.tertiaryLabel))

@@ -20,6 +20,14 @@ final class BoardStore {
     private(set) var updatingTaskIDs: Set<String> = []
     private(set) var isRealtimeConnected = false
 
+    /// Public preview links, keyed by project. An id present in
+    /// `resolvedShareIDs` but absent here is known not to be shared, which is
+    /// what keeps the header icon from re-asking on every appearance. Share
+    /// state is never cached to disk: a stale link would be shown as live long
+    /// after it was revoked.
+    private(set) var shares: [String: BoardProjectShare] = [:]
+    private(set) var resolvedShareIDs: Set<String> = []
+
     /// Archived tasks of one project, paged separately from the board itself.
     private(set) var archivedTasks: [ArchivedBoardTask] = []
     private(set) var archivedProjectID: String?
@@ -56,6 +64,8 @@ final class BoardStore {
         errorMessage = nil
         updatingTaskIDs = []
         isRealtimeConnected = false
+        shares = [:]
+        resolvedShareIDs = []
         resetArchived()
         cachedIdentity = nil
         selectionCacheKey = nil
@@ -196,7 +206,8 @@ final class BoardStore {
         to dueDate: Date?,
         using auth: AuthStore
     ) async -> Bool {
-        guard task.dueDate != dueDate,
+        guard BoardTask.isValidSpan(start: task.startDate, due: dueDate),
+              task.dueDate != dueDate,
               !updatingTaskIDs.contains(task.id),
               let projectIndex = projects.firstIndex(where: { $0.id == task.projectID }),
               let stateIndex = projects[projectIndex].states.firstIndex(where: { $0.id == task.stateID }),
@@ -215,6 +226,36 @@ final class BoardStore {
             return true
         } catch {
             projects[projectIndex].states[stateIndex].tasks[taskIndex].dueDate = previousDueDate
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func updateStartDate(
+        of task: BoardTask,
+        to startDate: Date?,
+        using auth: AuthStore
+    ) async -> Bool {
+        guard BoardTask.isValidSpan(start: startDate, due: task.dueDate),
+              task.startDate != startDate,
+              !updatingTaskIDs.contains(task.id),
+              let projectIndex = projects.firstIndex(where: { $0.id == task.projectID }),
+              let stateIndex = projects[projectIndex].states.firstIndex(where: { $0.id == task.stateID }),
+              let taskIndex = projects[projectIndex].states[stateIndex].tasks.firstIndex(where: { $0.id == task.id }) else {
+            return false
+        }
+
+        let previousStartDate = projects[projectIndex].states[stateIndex].tasks[taskIndex].startDate
+        projects[projectIndex].states[stateIndex].tasks[taskIndex].startDate = startDate
+        updatingTaskIDs.insert(task.id)
+        defer { updatingTaskIDs.remove(task.id) }
+
+        do {
+            try await auth.updateBoardTaskStartDate(id: task.id, startDate: startDate)
+            await refresh(using: auth)
+            return true
+        } catch {
+            projects[projectIndex].states[stateIndex].tasks[taskIndex].startDate = previousStartDate
             errorMessage = error.localizedDescription
             return false
         }
@@ -324,6 +365,34 @@ final class BoardStore {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    // MARK: - Project public links
+
+    /// Only the owner may publish; the server enforces it and the button is
+    /// shown only for owned projects, so a failure here is a real failure.
+    func loadShare(projectID: String, using auth: AuthStore) async throws {
+        applyShare(try await auth.loadBoardProjectShare(projectID: projectID), for: projectID)
+    }
+
+    func publishShare(
+        projectID: String,
+        expires: String,
+        using auth: AuthStore
+    ) async throws -> BoardProjectShare {
+        let share = try await auth.publishBoardProject(projectID: projectID, expires: expires)
+        applyShare(share, for: projectID)
+        return share
+    }
+
+    func revokeShare(projectID: String, using auth: AuthStore) async throws {
+        try await auth.unpublishBoardProject(projectID: projectID)
+        applyShare(nil, for: projectID)
+    }
+
+    private func applyShare(_ share: BoardProjectShare?, for projectID: String) {
+        shares[projectID] = share
+        resolvedShareIDs.insert(projectID)
     }
 
     func listenForRealtimeUpdates(using auth: AuthStore) async {

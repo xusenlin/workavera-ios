@@ -50,6 +50,7 @@ struct BoardToolPayload: Equatable, Sendable {
         var title: String
         var description: String?
         var priority: TaskPriority?
+        var startDate: String?
         var dueDate: String?
         var projectName: String?
         var stateName: String?
@@ -190,6 +191,7 @@ struct BoardToolPayload: Equatable, Sendable {
             title: title,
             description: nonEmpty(object["description"]?.stringValue),
             priority: object["priority"]?.stringValue.flatMap(TaskPriority.init(rawValue:)),
+            startDate: nonEmpty(object["startDate"]?.stringValue),
             dueDate: nonEmpty(object["dueDate"]?.stringValue),
             projectName: nonEmpty(object["project"]?.objectValue?["name"]?.stringValue),
             stateName: nonEmpty(object["state"]?.objectValue?["name"]?.stringValue),

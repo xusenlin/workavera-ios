@@ -6,6 +6,7 @@ struct BoardView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(BoardStore.self) private var board
     @State private var selectedTask: BoardTask?
+    @State private var shareProject: BoardProject?
     @State private var showProjectSwitcher = false
     @State private var showArchivedTasks = false
 
@@ -29,7 +30,18 @@ struct BoardView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Board")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                // Only the owner may publish a project, matching the web app.
+                if let project = selectedProject, project.ownerID == auth.user?.id {
+                    let shared = board.shares[project.id] != nil
+                    Button {
+                        shareProject = project
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .foregroundStyle(shared ? Color.green : Color.accentColor)
+                    }
+                    .accessibilityLabel(shared ? "Shared publicly" : "Share project")
+                }
                 Button {
                     showArchivedTasks = true
                 } label: {
@@ -41,6 +53,14 @@ struct BoardView: View {
         }
         .task(id: auth.user?.id) {
             await board.loadForPresentation(using: auth)
+        }
+        // The icon reports that a project is public, so the share resolves
+        // with the selected project rather than when the sheet opens.
+        .task(id: selectedProject?.id) {
+            guard let project = selectedProject,
+                  project.ownerID == auth.user?.id,
+                  !board.resolvedShareIDs.contains(project.id) else { return }
+            try? await board.loadShare(projectID: project.id, using: auth)
         }
         .task(id: auth.user?.id) {
             await board.listenForRealtimeUpdates(using: auth)
@@ -75,6 +95,9 @@ struct BoardView: View {
                     onPriorityChange: { priority in
                         await board.updatePriority(of: task, to: priority, using: auth)
                     },
+                    onStartDateChange: { startDate in
+                        await board.updateStartDate(of: task, to: startDate, using: auth)
+                    },
                     onDueDateChange: { dueDate in
                         await board.updateDueDate(of: task, to: dueDate, using: auth)
                     }
@@ -82,6 +105,9 @@ struct BoardView: View {
                     Task { await board.moveTask(task, to: newStateID, using: auth) }
                 }
             }
+        }
+        .sheet(item: $shareProject) { project in
+            ProjectShareSheet(project: project)
         }
     }
 
@@ -490,12 +516,17 @@ private struct TaskDetailSheet: View {
     let states: [BoardState]
     let currentStateID: String?
     let onPriorityChange: (TaskPriority) async -> Bool
+    let onStartDateChange: (Date?) async -> Bool
     let onDueDateChange: (Date?) async -> Bool
     let onMove: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var priority: TaskPriority
     @State private var isUpdatingPriority = false
+    @State private var startDate: Date?
+    @State private var draftStartDate: Date
+    @State private var isUpdatingStartDate = false
+    @State private var showStartDateEditor = false
     @State private var dueDate: Date?
     @State private var draftDueDate: Date
     @State private var isUpdatingDueDate = false
@@ -506,6 +537,7 @@ private struct TaskDetailSheet: View {
         states: [BoardState],
         currentStateID: String?,
         onPriorityChange: @escaping (TaskPriority) async -> Bool,
+        onStartDateChange: @escaping (Date?) async -> Bool,
         onDueDateChange: @escaping (Date?) async -> Bool,
         onMove: @escaping (String) -> Void
     ) {
@@ -513,9 +545,12 @@ private struct TaskDetailSheet: View {
         self.states = states
         self.currentStateID = currentStateID
         self.onPriorityChange = onPriorityChange
+        self.onStartDateChange = onStartDateChange
         self.onDueDateChange = onDueDateChange
         self.onMove = onMove
         _priority = State(initialValue: task.priority)
+        _startDate = State(initialValue: task.startDate)
+        _draftStartDate = State(initialValue: task.startDate ?? .now)
         _dueDate = State(initialValue: task.dueDate)
         _draftDueDate = State(
             initialValue: task.dueDate
@@ -552,6 +587,8 @@ private struct TaskDetailSheet: View {
                         Divider().padding(.leading, 54)
                         priorityRow
                         Divider().padding(.leading, 54)
+                        startDateRow
+                        Divider().padding(.leading, 54)
                         dueDateRow
                         if task.documentCount > 0 {
                             Divider().padding(.leading, 54)
@@ -586,8 +623,98 @@ private struct TaskDetailSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .sheet(isPresented: $showStartDateEditor) {
+            startDateEditor
+        }
         .sheet(isPresented: $showDueDateEditor) {
             dueDateEditor
+        }
+    }
+
+    private var startDateRow: some View {
+        Button {
+            draftStartDate = startDate ?? .now
+            showStartDateEditor = true
+        } label: {
+            infoRow(icon: "calendar.badge.clock", title: "Start Date") {
+                HStack(spacing: 5) {
+                    if isUpdatingStartDate {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    if let startDate {
+                        Text(
+                            startDate.formatted(
+                                .dateTime.month(.abbreviated).day().year()
+                            )
+                        )
+                        .foregroundStyle(.secondary)
+                    } else {
+                        Text("No start date")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isUpdatingStartDate)
+    }
+
+    private var startDateEditor: some View {
+        NavigationStack {
+            Form {
+                // A start date is a day, not a moment: the web form picks
+                // YYYY-MM-DD, so this picker leaves the time out too.
+                DatePicker(
+                    "Start date",
+                    selection: $draftStartDate,
+                    displayedComponents: [.date]
+                )
+                .datePickerStyle(.graphical)
+
+                // The server rejects an inverted span; say so before a save
+                // can fail on it.
+                if !BoardTask.isValidSpan(start: draftStartDate, due: dueDate) {
+                    Text("The start date cannot be after the due date.")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+
+                if startDate != nil {
+                    Button("Clear Start Date", role: .destructive) {
+                        saveStartDate(nil)
+                    }
+                }
+            }
+            .navigationTitle("Start Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showStartDateEditor = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { saveStartDate(draftStartDate) }
+                        .disabled(!BoardTask.isValidSpan(start: draftStartDate, due: dueDate))
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func saveStartDate(_ newStartDate: Date?) {
+        guard BoardTask.isValidSpan(start: newStartDate, due: dueDate) else { return }
+        let previousStartDate = startDate
+        startDate = newStartDate
+        showStartDateEditor = false
+        isUpdatingStartDate = true
+        Task {
+            if !(await onStartDateChange(newStartDate)) {
+                startDate = previousStartDate
+            }
+            isUpdatingStartDate = false
         }
     }
 
@@ -635,6 +762,14 @@ private struct TaskDetailSheet: View {
                 )
                 .datePickerStyle(.graphical)
 
+                // A due date before the start date would render as a negative
+                // span, which the server rejects.
+                if !BoardTask.isValidSpan(start: startDate, due: draftDueDate) {
+                    Text("The due date cannot be before the start date.")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+
                 if dueDate != nil {
                     Button("Clear Due Date", role: .destructive) {
                         saveDueDate(nil)
@@ -649,6 +784,7 @@ private struct TaskDetailSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { saveDueDate(draftDueDate) }
+                        .disabled(!BoardTask.isValidSpan(start: startDate, due: draftDueDate))
                 }
             }
         }
@@ -656,6 +792,7 @@ private struct TaskDetailSheet: View {
     }
 
     private func saveDueDate(_ newDueDate: Date?) {
+        guard BoardTask.isValidSpan(start: startDate, due: newDueDate) else { return }
         let previousDueDate = dueDate
         dueDate = newDueDate
         showDueDateEditor = false
@@ -831,7 +968,7 @@ private struct TaskCard: View {
 
     @ViewBuilder
     private var footer: some View {
-        let hasMeta = task.priority != .none || task.dueDate != nil || task.documentCount > 0
+        let hasMeta = task.priority != .none || task.dateSpanText != nil || task.documentCount > 0
         if hasMeta || !task.assignees.isEmpty {
             HStack(spacing: 10) {
                 if task.priority != .none {
@@ -845,8 +982,8 @@ private struct TaskCard: View {
                     .foregroundStyle(.secondary)
                 }
 
-                if let dueDate = task.dueDate {
-                    Label(dueDate.formatted(.dateTime.month(.abbreviated).day()), systemImage: "calendar")
+                if let span = task.dateSpanText {
+                    Label(span, systemImage: "calendar")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(task.isOverdue ? .red : .secondary)
                 }
@@ -942,5 +1079,283 @@ private struct MemberStack: View {
 
     private var borderColor: Color {
         Color(.secondarySystemGroupedBackground)
+    }
+}
+
+// MARK: - Project public link
+
+/// Publishes a project to a public preview link (web app ShareProjectButton).
+/// Unlike a shared document, the link pins nothing: the page always shows the
+/// project as it stands, so there is no revision to republish — only an expiry
+/// to set and a link to revoke.
+private struct ProjectShareSheet: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(BoardStore.self) private var board
+    let project: BoardProject
+
+    /// The store owns the link, so the toolbar behind this sheet reflects
+    /// publishing and revoking without being told twice.
+    private var share: BoardProjectShare? { board.shares[project.id] }
+    private var hasLoaded: Bool { board.resolvedShareIDs.contains(project.id) }
+
+    @State private var expiry: DocumentShareExpiry = .never
+    @State private var chineseDates = false
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+    @State private var copied = false
+    // Publishing roughly doubles the height of the sheet. Left at .medium it
+    // would hide the link it just created below the fold, so the sheet grows
+    // with what it has to show.
+    @State private var detent: PresentationDetent = .medium
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(
+                        """
+                        Anyone with the link sees this project as it stands \
+                        right now, without signing in.
+                        """
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Label {
+                        Text("Task titles and descriptions, states, labels, dates, and member names with their avatars.")
+                    } icon: {
+                        Image(systemName: "eye")
+                    }
+                    Label {
+                        Text("Archived tasks, activity records, assignees, and member emails and roles stay private.")
+                    } icon: {
+                        Image(systemName: "eye.slash")
+                    }
+                } header: {
+                    Text("What the link shows")
+                } footer: {
+                    Text("Archiving or deleting the project takes the link down immediately.")
+                }
+                .font(.footnote)
+
+                if let errorMessage {
+                    InlineErrorListSection(message: errorMessage) {
+                        Task { await load() }
+                    }
+                }
+
+                if !hasLoaded {
+                    Section { ProgressView("Loading link…") }
+                } else if let share {
+                    linkSection(share)
+                    expirySection
+                    Section {
+                        Button(role: .destructive) {
+                            Task { await revoke() }
+                        } label: {
+                            Text("Revoke Link").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                        .tint(.red)
+                        .disabled(isWorking)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                    }
+                } else {
+                    expirySection
+                    Section {
+                        Button {
+                            Task { await publish(expiry: expiry) }
+                        } label: {
+                            Text(isWorking ? "Creating…" : "Create Link")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(isWorking)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                    }
+                }
+            }
+            .navigationTitle("Share Project")
+            .navigationBarTitleDisplayMode(.inline)
+            .task { await load() }
+        }
+        .presentationDetents([.medium, .large], selection: $detent)
+    }
+
+    /// The language parameter only formats dates, so it belongs to the link
+    /// the owner hands out rather than to the share record.
+    private func linkURL(for share: BoardProjectShare) -> URL? {
+        guard var url = auth.publicBoardURL(for: share) else { return nil }
+        if chineseDates {
+            url.append(queryItems: [URLQueryItem(name: "lang", value: "zh")])
+        }
+        return url
+    }
+
+    @ViewBuilder
+    private func linkSection(_ share: BoardProjectShare) -> some View {
+        Section("Public Link") {
+            if let url = linkURL(for: share) {
+                Text(url.absoluteString)
+                    .font(.footnote.monospaced())
+                    .textSelection(.enabled)
+                Button {
+                    copy(url)
+                } label: {
+                    Label(
+                        copied ? "Copied" : "Copy Link",
+                        systemImage: copied ? "checkmark" : "doc.on.doc"
+                    )
+                    .foregroundStyle(copied ? Color.green : Color.accentColor)
+                }
+                ShareLink(item: url) {
+                    Label("Share Link", systemImage: "square.and.arrow.up")
+                }
+                Link(destination: url) {
+                    Label("Open Link", systemImage: "safari")
+                }
+                Toggle(isOn: $chineseDates) {
+                    Text("Chinese date format (?lang=zh)")
+                        .font(.footnote)
+                }
+            } else {
+                Text("The server address could not be read.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var expirySection: some View {
+        Section {
+            Picker("Expires", selection: expirySelection) {
+                ForEach(expiryOptions) { option in
+                    Text(label(for: option)).tag(option)
+                }
+            }
+            .disabled(isWorking)
+        }
+    }
+
+    /// Changing the expiry of a published link takes effect at once, matching
+    /// the web app; before there is a link it only stages the choice.
+    private var expirySelection: Binding<DocumentShareExpiry> {
+        Binding(get: { expiry }, set: { option in
+            expiry = option
+            if share != nil {
+                Task { await publish(expiry: option) }
+            }
+        })
+    }
+
+    /// "Keep" is offered only for a link that already expires, so every other
+    /// change to it leaves that date where the creator set it.
+    private var expiryOptions: [DocumentShareExpiry] {
+        DocumentShareExpiry.allCases.filter { $0 != .keep || share?.expiresAt != nil }
+    }
+
+    private func label(for option: DocumentShareExpiry) -> String {
+        guard option == .keep, let expiresAt = share?.expiresAt else { return option.label }
+        return "Keep \(expiresAt.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    /// The label carries its own confirmation, the way the code-block copy
+    /// button does: a sheet this small has nowhere to put a banner.
+    private func copy(_ url: URL) {
+        UIPasteboard.general.string = url.absoluteString
+        withAnimation { copied = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation { copied = false }
+        }
+    }
+
+    private func load() async {
+        errorMessage = nil
+        // The toolbar may already have resolved the link, so open at the right
+        // size instead of growing once the refresh lands.
+        syncToShare(animated: false)
+        do {
+            try await board.loadShare(projectID: project.id, using: auth)
+            syncToShare()
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func publish(expiry option: DocumentShareExpiry) async {
+        guard !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await board.publishShare(
+                projectID: project.id,
+                expires: option.requestValue(share: share),
+                using: auth
+            )
+            syncToShare()
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func revoke() async {
+        guard !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await board.revokeShare(projectID: project.id, using: auth)
+            syncToShare()
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Brings the picker and the sheet's height in line with the link the
+    /// store now holds.
+    private func syncToShare(animated: Bool = true) {
+        expiry = share?.expiresAt == nil ? .never : .keep
+        let target: PresentationDetent = share == nil ? .medium : .large
+        if animated {
+            withAnimation { detent = target }
+        } else {
+            detent = target
+        }
+    }
+}
+
+private extension DocumentShareExpiry {
+    /// Expiry for a board project share request; an empty string means the
+    /// link never expires.
+    func requestValue(share: BoardProjectShare?, now: Date = .now) -> String {
+        if self == .keep { return share?.expires ?? "" }
+        let days: Int
+        switch self {
+        case .never, .keep: return ""
+        case .sevenDays: days = 7
+        case .thirtyDays: days = 30
+        }
+        guard let date = Calendar(identifier: .gregorian).date(
+            byAdding: .day,
+            value: days,
+            to: now
+        ) else { return "" }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter.string(from: date)
     }
 }

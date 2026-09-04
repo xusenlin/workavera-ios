@@ -10,11 +10,32 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
-Needs a Workavera server on 0.1.0 or newer: public document links are served by
-endpoints that release adds. Upgrade the server first.
+Needs a Workavera server on 0.1.1 or newer: task start dates, public project
+links, and subscription discovery are served by endpoints and fields that
+release adds. Upgrade the server first.
 
 ### Added
 
+- A Board task can carry an optional start date beside its due date, so a task
+  reads as a span of work instead of a point in time. The detail sheet edits it
+  from its own row, the card shows the span as "start – due", and a start set
+  after the due date is refused before the server can reject it. Tasks with
+  only a deadline, only a start, or neither behave exactly as before.
+- A project you own carries a share button in Board's toolbar, publishing it to
+  a public preview link anyone can open in a browser without an account, with
+  no expiry or one 7 or 30 days out. Unlike a shared document the link pins
+  nothing and always shows the project as it stands; revoking, expiring,
+  archiving, or deleting takes it down, and the icon turns green while a link
+  is live. An optional `?lang=zh` switch formats the page's dates in Chinese.
+- Reading gains a Discover sheet: subscriptions you own, either an RSS/Atom
+  feed or GitHub's trending board for one language over a day, week, or month,
+  fetch candidates that are not in your list yet. A candidate can be summarized
+  into English, 中文, or 日本語 first, and only the ones you keep become
+  reading items, carrying the summary along. A subscription that fails to fetch
+  reports its own error instead of emptying the panel.
+- The share sheet of a published document can open its public link in the
+  browser, so checking what a reader actually sees no longer means pasting the
+  link somewhere first.
 - A document you own carries a share button in its toolbar, publishing it to a
   link anyone can open in a browser without an account, with no expiry or one
   7 or 30 days out. The link serves the revision you publish and stays on it

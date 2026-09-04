@@ -66,6 +66,7 @@ struct BoardTask: Identifiable, Equatable {
     var title: String
     var description: String
     var priority: TaskPriority
+    var startDate: Date?
     var dueDate: Date?
     var labels: [BoardLabel]
     var assignees: [BoardMember]
@@ -75,6 +76,23 @@ struct BoardTask: Identifiable, Equatable {
     var isOverdue: Bool {
         guard let dueDate else { return false }
         return dueDate < .now
+    }
+
+    /// The server rejects a start after the due date, so the form says so
+    /// before a save can fail on it. Both dates stay optional.
+    static func isValidSpan(start: Date?, due: Date?) -> Bool {
+        guard let start, let due else { return true }
+        return start <= due
+    }
+
+    /// A start and a due date read as one span; either alone reads as a day.
+    var dateSpanText: String? {
+        let day: (Date) -> String = { $0.formatted(.dateTime.month(.abbreviated).day()) }
+        if let startDate, let dueDate,
+           !Calendar.current.isDate(startDate, inSameDayAs: dueDate) {
+            return "\(day(startDate)) – \(day(dueDate))"
+        }
+        return (dueDate ?? startDate).map(day)
     }
 
     var copyText: String {
@@ -228,11 +246,13 @@ struct BoardTaskRecord: Decodable {
     let labelIDs: [String]
     let assigneeIDs: [String]
     let documentIDs: [String]
+    let startDate: String
     let dueDate: String
     let rank: Double
 
     private enum CodingKeys: String, CodingKey {
         case id, project, state, title, description, priority, labels, assignees, documents, rank
+        case startDate = "start_date"
         case dueDate = "due_date"
     }
 
@@ -247,6 +267,7 @@ struct BoardTaskRecord: Decodable {
         labelIDs = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
         assigneeIDs = try container.decodeIfPresent([String].self, forKey: .assignees) ?? []
         documentIDs = try container.decodeIfPresent([String].self, forKey: .documents) ?? []
+        startDate = try container.decodeIfPresent(String.self, forKey: .startDate) ?? ""
         dueDate = try container.decodeIfPresent(String.self, forKey: .dueDate) ?? ""
         rank = try container.decodeIfPresent(Double.self, forKey: .rank) ?? 0
     }
@@ -294,7 +315,49 @@ struct BoardTaskDueDateResponse: Decodable {
     }
 }
 
+struct BoardTaskStartDateResponse: Decodable {
+    let id: String
+    let startDate: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case startDate = "start_date"
+    }
+}
+
 struct BoardTaskArchiveResponse: Decodable {
     let id: String
     let archived: Bool
+}
+
+/// A project's public preview link. Unlike a shared document it pins nothing:
+/// the link always shows the project as it stands, so there is no revision to
+/// republish — only an expiry to set and a link to revoke. A nil `expiresAt`
+/// means the link never expires.
+struct BoardProjectShare: Equatable, Decodable {
+    let projectID: String
+    let slug: String
+    let expires: String
+    let created: String
+    let updated: String
+
+    private enum CodingKeys: String, CodingKey {
+        case projectID = "projectId"
+        case slug, expires, created, updated
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        projectID = try container.decodeIfPresent(String.self, forKey: .projectID) ?? ""
+        slug = try container.decodeIfPresent(String.self, forKey: .slug) ?? ""
+        expires = try container.decodeIfPresent(String.self, forKey: .expires) ?? ""
+        created = try container.decodeIfPresent(String.self, forKey: .created) ?? ""
+        updated = try container.decodeIfPresent(String.self, forKey: .updated) ?? ""
+    }
+
+    var expiresAt: Date? {
+        guard !expires.isEmpty else { return nil }
+        let parsed = DocsDate.parse(expires)
+        return parsed == .distantPast ? nil : parsed
+    }
 }

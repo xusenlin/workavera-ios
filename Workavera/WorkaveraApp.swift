@@ -14,6 +14,7 @@ struct WorkaveraApp: App {
     @State private var savedMemories = SavedMemoriesStore()
     @State private var contacts = ContactsStore()
     @State private var reading = ReadingStore()
+    @State private var readingDiscover = ReadingDiscoverStore()
     @State private var chat = ChatStore()
     @State private var support = SupportStore()
 
@@ -44,6 +45,7 @@ struct WorkaveraApp: App {
             .environment(savedMemories)
             .environment(contacts)
             .environment(reading)
+            .environment(readingDiscover)
             .environment(chat)
             .environment(support)
             .preferredColorScheme(auth.appearance.colorScheme)

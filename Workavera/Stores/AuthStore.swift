@@ -442,6 +442,54 @@ final class AuthStore {
         return try await makeClient().markAllReadingItemsRead(token: token)
     }
 
+    // MARK: - Reading subscriptions (discover)
+
+    func loadReadingSources() async throws -> [ReadingSource] {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getReadingSources(token: token)
+    }
+
+    func createReadingSource(input: ReadingSourceInput) async throws {
+        guard let user, let token else { throw sessionUnavailableError }
+        try await makeClient().createReadingSource(ownerID: user.id, input: input, token: token)
+    }
+
+    func updateReadingSource(id: String, input: ReadingSourceInput) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().updateReadingSource(id: id, input: input, token: token)
+    }
+
+    func setReadingSourceEnabled(id: String, enabled: Bool) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().setReadingSourceEnabled(id: id, enabled: enabled, token: token)
+    }
+
+    func deleteReadingSource(id: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().deleteReadingSource(id: id, token: token)
+    }
+
+    func discoverReadingCandidates(
+        sourceIDs: [String]
+    ) async throws -> (items: [DiscoverCandidate], failures: [DiscoverFailure]) {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().discoverReadingCandidates(sourceIDs: sourceIDs, token: token)
+    }
+
+    func summarizeReadingCandidate(
+        url: String,
+        title: String,
+        language: String
+    ) async throws -> CandidateSummary {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().summarizeReadingCandidate(
+            url: url,
+            title: title,
+            language: language,
+            token: token
+        )
+    }
+
     func loadNotifications(
         page: Int,
         pageSize: Int,
@@ -843,6 +891,47 @@ final class AuthStore {
             dueDate: dueDate,
             token: token
         )
+    }
+
+    func updateBoardTaskStartDate(id: String, startDate: Date?) async throws {
+        guard let token else { throw sessionUnavailableError }
+        _ = try await makeClient().updateBoardTaskStartDate(
+            id: id,
+            startDate: startDate,
+            token: token
+        )
+    }
+
+    // Share state is never cached: a stale link would be shown as live long
+    // after it was revoked or expired.
+
+    func loadBoardProjectShare(projectID: String) async throws -> BoardProjectShare? {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().getBoardProjectShare(projectID: projectID, token: token)
+    }
+
+    func publishBoardProject(projectID: String, expires: String) async throws -> BoardProjectShare {
+        guard let token else { throw sessionUnavailableError }
+        return try await makeClient().publishBoardProject(
+            projectID: projectID,
+            expires: expires,
+            token: token
+        )
+    }
+
+    func unpublishBoardProject(projectID: String) async throws {
+        guard let token else { throw sessionUnavailableError }
+        try await makeClient().unpublishBoardProject(projectID: projectID, token: token)
+    }
+
+    /// Public address of a shared project's preview, as a reader would open it
+    /// in a browser.
+    func publicBoardURL(for share: BoardProjectShare) -> URL? {
+        guard let base = try? ServerConfiguration(
+            address: serverAddress,
+            allowInsecureHTTP: allowInsecureHTTP
+        ).baseURL else { return nil }
+        return base.appending(path: "p/\(share.slug)")
     }
 
     func archiveBoardTask(id: String) async throws {
