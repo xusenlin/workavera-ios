@@ -22,12 +22,34 @@ enum AgendaWidgetContent: String, AppEnum {
     }
 }
 
+/// How many upcoming items the widget lists. Eight uses a denser layout.
+enum AgendaWidgetItemCount: String, AppEnum {
+    case six
+    case eight
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Items"
+    static var caseDisplayRepresentations: [AgendaWidgetItemCount: DisplayRepresentation] = [
+        .six: "6 Items",
+        .eight: "8 Items",
+    ]
+
+    var count: Int {
+        switch self {
+        case .six: 6
+        case .eight: 8
+        }
+    }
+}
+
 struct AgendaWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "Agenda"
     static var description = IntentDescription("Choose what the upcoming list shows.")
 
     @Parameter(title: "Show", default: .all)
     var content: AgendaWidgetContent
+
+    @Parameter(title: "Items", default: .six)
+    var itemCount: AgendaWidgetItemCount
 }
 
 /// Backs the widget's refresh button. WidgetKit reloads the timeline after this

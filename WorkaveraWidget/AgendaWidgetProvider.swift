@@ -12,6 +12,7 @@ struct AgendaWidgetEntry: TimelineEntry {
     let snapshot: AgendaWidgetSnapshot?
     let status: Status
     let content: AgendaWidgetContent
+    let itemCount: AgendaWidgetItemCount
 }
 
 struct AgendaWidgetProvider: AppIntentTimelineProvider {
@@ -21,7 +22,7 @@ struct AgendaWidgetProvider: AppIntentTimelineProvider {
     private static let refreshInterval: TimeInterval = 30 * 60
 
     func placeholder(in context: Context) -> AgendaWidgetEntry {
-        .sample(content: .all)
+        .sample(content: .all, itemCount: .six)
     }
 
     func snapshot(
@@ -29,9 +30,15 @@ struct AgendaWidgetProvider: AppIntentTimelineProvider {
         in context: Context
     ) async -> AgendaWidgetEntry {
         if !context.isPreview, let cached = AgendaWidgetStore.loadSnapshot() {
-            return AgendaWidgetEntry(date: .now, snapshot: cached, status: .ready, content: configuration.content)
+            return AgendaWidgetEntry(
+                date: .now,
+                snapshot: cached,
+                status: .ready,
+                content: configuration.content,
+                itemCount: configuration.itemCount
+            )
         }
-        return .sample(content: configuration.content)
+        return .sample(content: configuration.content, itemCount: configuration.itemCount)
     }
 
     func timeline(
@@ -60,7 +67,8 @@ struct AgendaWidgetProvider: AppIntentTimelineProvider {
             date: now,
             snapshot: snapshot,
             status: status,
-            content: configuration.content
+            content: configuration.content,
+            itemCount: configuration.itemCount
         )
         let calendar = snapshot?.calendar ?? .current
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))
@@ -72,7 +80,7 @@ struct AgendaWidgetProvider: AppIntentTimelineProvider {
 
 extension AgendaWidgetEntry {
     /// Gallery and placeholder content.
-    static func sample(content: AgendaWidgetContent) -> AgendaWidgetEntry {
+    static func sample(content: AgendaWidgetContent, itemCount: AgendaWidgetItemCount) -> AgendaWidgetEntry {
         let now = Date.now
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
@@ -115,12 +123,23 @@ extension AgendaWidgetEntry {
                 dayKeys: [day(9)], startAt: time(9, hour: 19), endAt: time(9, hour: 21),
                 allDay: false, tint: EventColor.amber.rawValue
             ),
+            AgendaWidgetItem(
+                id: "sample-plan", kind: .task, title: String(localized: "Plan next sprint"), detail: "Workavera",
+                dayKeys: [day(11)], startAt: nil, endAt: nil,
+                allDay: true, tint: TaskPriority.low.rawValue
+            ),
+            AgendaWidgetItem(
+                id: "sample-birthday", kind: .event, title: String(localized: "Mom's birthday"), detail: "",
+                dayKeys: [day(14)], startAt: time(14, hour: 0), endAt: time(15, hour: 0),
+                allDay: true, tint: EventColor.red.rawValue
+            ),
         ]
         return AgendaWidgetEntry(
             date: now,
             snapshot: AgendaWidgetSnapshot(timezone: TimeZone.current.identifier, items: items, updatedAt: now),
             status: .ready,
-            content: content
+            content: content,
+            itemCount: itemCount
         )
     }
 }

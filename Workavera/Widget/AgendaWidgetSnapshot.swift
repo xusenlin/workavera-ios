@@ -41,7 +41,8 @@ struct AgendaWidgetItem: Codable, Hashable, Identifiable {
     let id: String
     let kind: Kind
     let title: String
-    /// Project name for tasks, location for events.
+    /// Project name for tasks; for events, the first line of the notes, or the
+    /// location when there are no notes.
     let detail: String
     /// Every `yyyy-MM-dd` day (in the snapshot time zone) the item covers.
     let dayKeys: [String]
@@ -89,7 +90,7 @@ extension AgendaWidgetSnapshot {
                 id: occurrence.id,
                 kind: .event,
                 title: occurrence.event.title,
-                detail: occurrence.event.location,
+                detail: Self.eventDetail(occurrence.event),
                 dayKeys: occurrenceDays[occurrence.id] ?? [],
                 startAt: occurrence.startAt,
                 endAt: occurrence.endAt,
@@ -116,6 +117,15 @@ extension AgendaWidgetSnapshot {
         self.timezone = calendar.timeZone.identifier
         self.items = (eventItems + taskItems).sorted(by: Self.precedes)
         self.updatedAt = now
+    }
+
+    private static func eventDetail(_ event: AppEvent) -> String {
+        let note = event.description
+            .split(whereSeparator: \.isNewline)
+            .lazy
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        return note ?? event.location.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Orders items by day, then all-day entries, then start time.

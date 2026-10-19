@@ -12,6 +12,8 @@ enum AgendaWidgetStore {
     static let widgetKind = "WorkaveraAgendaWidget"
     /// Opened when the widget is tapped; the app maps the host to an `AppSection`.
     static let calendarURL = URL(string: "workavera://calendar")!
+    /// Opened by the widget's AI button.
+    static let chatURL = URL(string: "workavera://chat")!
 
     struct Session: Codable, Equatable {
         let baseURL: URL

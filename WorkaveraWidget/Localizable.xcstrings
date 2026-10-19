@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "6 Items": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "6 条"
+          }
+        }
+      }
+    },
+    "8 Items": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8 条"
+          }
+        }
+      }
+    },
     "Agenda": {
       "localizations": {
         "zh-Hans": {
@@ -91,6 +111,26 @@
         }
       }
     },
+    "Items": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "条数"
+          }
+        }
+      }
+    },
+    "Mom's birthday": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "妈妈生日"
+          }
+        }
+      }
+    },
     "Nothing coming up.": {
       "localizations": {
         "zh-Hans": {
@@ -101,12 +141,32 @@
         }
       }
     },
+    "Open Chat": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开 AI 对话"
+          }
+        }
+      }
+    },
     "Open Workavera to sign in.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "请打开 Workavera 登录"
+          }
+        }
+      }
+    },
+    "Plan next sprint": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "规划下个迭代"
           }
         }
       }
@@ -221,22 +281,12 @@
         }
       }
     },
-    "Upcoming": {
+    "Your upcoming tasks and events, each marked with its date.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "近期安排"
-          }
-        }
-      }
-    },
-    "Your next six tasks and events, each marked with its date.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "按日期列出接下来的 6 条待办和事件。"
+            "value": "按日期列出接下来的待办和事件。"
           }
         }
       }

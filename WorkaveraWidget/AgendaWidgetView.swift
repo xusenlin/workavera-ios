@@ -3,8 +3,6 @@ import WidgetKit
 
 /// Everything the widget shows for one entry, derived from the snapshot.
 private struct AgendaPresentation {
-    static let maxRows = 6
-
     struct Row: Identifiable {
         let item: AgendaWidgetItem
         /// The day the row is listed under (today for events already in progress).
@@ -18,6 +16,8 @@ private struct AgendaPresentation {
     let today: Date
     let rows: [Row]
     let updatedAt: Date?
+    /// Eight rows need a tighter layout than six to fit.
+    let isDense: Bool
 
     init(entry: AgendaWidgetEntry) {
         let calendar = entry.snapshot?.calendar ?? Calendar(identifier: .gregorian)
@@ -31,13 +31,14 @@ private struct AgendaPresentation {
             guard let dayKey = item.dayKeys.first(where: { $0 >= todayKey }),
                   let date = formatter.date(from: dayKey) else { continue }
             rows.append(Row(item: item, dayKey: dayKey, date: date))
-            if rows.count == Self.maxRows { break }
+            if rows.count == entry.itemCount.count { break }
         }
 
         self.calendar = calendar
         self.today = today
         self.rows = rows
         self.updatedAt = entry.snapshot?.updatedAt
+        self.isDense = entry.itemCount == .eight
     }
 
     /// The user's system language. `Locale.current` follows the extension's own
@@ -109,7 +110,7 @@ struct AgendaWidgetView: View {
 
     var body: some View {
         let presentation = AgendaPresentation(entry: entry)
-        VStack(alignment: .leading, spacing: isLarge ? 10 : 5) {
+        VStack(alignment: .leading, spacing: presentation.isDense ? (isLarge ? 10 : 5) : (isLarge ? 12 : 7)) {
             AgendaHeader(presentation: presentation, isLarge: isLarge)
             switch entry.status {
             case .signedOut:
@@ -127,6 +128,9 @@ struct AgendaWidgetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Eight rows on medium only fit with slightly tighter vertical margins.
+        .padding(.horizontal, 16)
+        .padding(.vertical, isLarge || !presentation.isDense ? 16 : 10)
         .widgetURL(AgendaWidgetStore.calendarURL)
     }
 
@@ -142,12 +146,14 @@ private struct AgendaHeader: View {
     let isLarge: Bool
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("Upcoming")
-                .font(isLarge ? .headline : .caption.weight(.semibold))
-            Text(presentation.text(presentation.today, template: "MMMdEEE"))
-                .font(isLarge ? .subheadline : .caption2)
-                .foregroundStyle(.red)
+        HStack(alignment: .center, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(verbatim: "Workavera")
+                    .font(isLarge ? .headline : .caption.weight(.semibold))
+                Text(presentation.text(presentation.today, template: "MMMdEEE"))
+                    .font(isLarge ? .subheadline : .caption2)
+                    .foregroundStyle(.red)
+            }
             Spacer(minLength: 2)
             if let updatedAt = presentation.updatedAt {
                 Text(presentation.text(updatedAt, template: "jmm"))
@@ -155,16 +161,38 @@ private struct AgendaHeader: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
-            Button(intent: RefreshAgendaIntent()) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
+            HStack(spacing: 6) {
+                Link(destination: AgendaWidgetStore.chatURL) {
+                    HeaderButtonLabel(systemName: "sparkles", tint: .purple, isLarge: isLarge)
+                }
+                .accessibilityLabel(Text("Open Chat"))
+                Button(intent: RefreshAgendaIntent()) {
+                    HeaderButtonLabel(systemName: "arrow.clockwise", tint: .secondary, isLarge: isLarge)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Refresh"))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("Refresh"))
+            // Let the buttons reach into the margins so they are easy to hit
+            // without pushing the list down.
+            .padding(.vertical, -5)
         }
+    }
+}
+
+/// A round, comfortably sized tap target for the header actions.
+private struct HeaderButtonLabel: View {
+    let systemName: String
+    let tint: Color
+    let isLarge: Bool
+
+    var body: some View {
+        let size: CGFloat = isLarge ? 34 : 30
+        Image(systemName: systemName)
+            .font(.system(size: isLarge ? 15 : 13, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .background(Circle().fill(tint.opacity(0.14)))
+            .contentShape(Circle())
     }
 }
 
@@ -173,28 +201,29 @@ private struct CompactAgendaList: View {
     let presentation: AgendaPresentation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        let dense = presentation.isDense
+        VStack(alignment: .leading, spacing: dense ? 2 : 3) {
             ForEach(presentation.rows) { row in
                 HStack(spacing: 6) {
                     Text(presentation.dateLabel(for: row))
-                        .font(.caption2.weight(.medium))
+                        .font(.system(size: dense ? 10.5 : 11, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(presentation.isToday(row) ? Color.red : Color.secondary)
                         .lineLimit(1)
                         .frame(width: 70, alignment: .leading)
                     RoundedRectangle(cornerRadius: 1)
                         .fill(presentation.tint(for: row.item))
-                        .frame(width: 3, height: 12)
-                    TitleText(item: row.item, font: .caption)
+                        .frame(width: 3, height: dense ? 11 : 12)
+                    TitleText(item: row.item, font: .system(size: dense ? 12 : 13))
                     Spacer(minLength: 4)
                     if let time = presentation.startTime(for: row) {
                         Text(time)
-                            .font(.caption2)
+                            .font(.system(size: dense ? 10.5 : 11))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(height: 15)
+                .frame(height: dense ? 13.5 : 15)
             }
         }
     }
@@ -205,6 +234,7 @@ private struct LargeAgendaList: View {
     let presentation: AgendaPresentation
 
     var body: some View {
+        let dense = presentation.isDense
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(presentation.rows.enumerated()), id: \.element.id) { index, row in
                 if index > 0 {
@@ -213,7 +243,7 @@ private struct LargeAgendaList: View {
                 HStack(spacing: 10) {
                     VStack(spacing: 0) {
                         Text(verbatim: "\(presentation.calendar.component(.day, from: row.date))")
-                            .font(.title3.weight(.semibold))
+                            .font(.system(size: dense ? 18 : 20, weight: .semibold))
                             .monospacedDigit()
                         Text(presentation.text(row.date, template: "EEE"))
                             .font(.caption2)
@@ -223,17 +253,17 @@ private struct LargeAgendaList: View {
                     .frame(width: 36)
                     RoundedRectangle(cornerRadius: 1.5)
                         .fill(presentation.tint(for: row.item))
-                        .frame(width: 3, height: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        TitleText(item: row.item, font: .subheadline.weight(.medium))
+                        .frame(width: 3, height: dense ? 26 : 30)
+                    VStack(alignment: .leading, spacing: dense ? 1 : 2) {
+                        TitleText(item: row.item, font: dense ? .footnote.weight(.medium) : .subheadline.weight(.medium))
                         Text(presentation.subtitle(for: row))
-                            .font(.caption)
+                            .font(dense ? .caption2 : .caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(height: 46)
+                .frame(height: dense ? 37 : 46)
             }
         }
     }

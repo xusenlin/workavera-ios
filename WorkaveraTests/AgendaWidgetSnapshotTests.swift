@@ -22,7 +22,8 @@ final class AgendaWidgetSnapshotTests: XCTestCase {
             "recurrence_frequency": "monthly", "recurrence_interval": 1
           },
           {
-            "id": "once", "title": "Glucose test", "start_at": "2026-10-20 16:00:00.000Z",
+            "id": "once", "title": "Glucose test", "description": "\n  Fast beforehand\nBring ID",
+            "location": "Clinic", "start_at": "2026-10-20 16:00:00.000Z",
             "end_at": "2026-10-21 16:00:00.000Z", "all_day": true, "color": "amber",
             "recurrence_frequency": "none"
           }
@@ -41,9 +42,24 @@ final class AgendaWidgetSnapshotTests: XCTestCase {
         )
         let once = try XCTUnwrap(snapshot.items.first { $0.title == "Glucose test" })
         XCTAssertEqual(once.dayKeys, ["2026-10-21"])
+        XCTAssertEqual(once.detail, "Fast beforehand")
         XCTAssertEqual(once.kind, .event)
         XCTAssertEqual(once.tint, "amber")
         XCTAssertTrue(once.allDay)
+    }
+
+    func testEventDetailFallsBackToLocationWithoutNotes() throws {
+        var event = try decode(AppEvent.self, #"""
+        {
+          "id": "meet", "title": "Review", "description": "", "location": "Room 3",
+          "start_at": "2026-10-22 02:00:00.000Z", "end_at": "2026-10-22 03:00:00.000Z"
+        }
+        """#)
+        event.timezone = timezone
+
+        let snapshot = AgendaWidgetSnapshot(events: [event], tasks: [], timezone: timezone, now: now)
+
+        XCTAssertEqual(snapshot.items.first?.detail, "Room 3")
     }
 
     func testKeepsOnlyTasksDueFromTodayWithinTheLookahead() throws {
