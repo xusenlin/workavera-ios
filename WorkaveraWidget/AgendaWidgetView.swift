@@ -7,7 +7,6 @@ private struct AgendaPresentation {
         let item: AgendaWidgetItem
         /// The day the row is listed under (today for events already in progress).
         let dayKey: String
-        let isOverdue: Bool
 
         var id: String { item.id }
     }
@@ -36,12 +35,10 @@ private struct AgendaPresentation {
         var rows: [Row] = []
         var nextUp: Row?
         for item in items {
-            if item.kind == .task, item.firstDayKey < todayKey {
-                rows.append(Row(item: item, dayKey: item.firstDayKey, isOverdue: true))
-            } else if let dayKey = item.dayKeys.first(where: { $0 >= todayKey && $0 <= weekEndKey }) {
-                rows.append(Row(item: item, dayKey: dayKey, isOverdue: false))
+            if let dayKey = item.dayKeys.first(where: { $0 >= todayKey && $0 <= weekEndKey }) {
+                rows.append(Row(item: item, dayKey: dayKey))
             } else if nextUp == nil, item.firstDayKey > weekEndKey {
-                nextUp = Row(item: item, dayKey: item.firstDayKey, isOverdue: false)
+                nextUp = Row(item: item, dayKey: item.firstDayKey)
             }
         }
 
@@ -49,10 +46,7 @@ private struct AgendaPresentation {
         self.today = today
         self.todayKey = todayKey
         self.markedDays = Set(items.flatMap(\.dayKeys))
-        self.rows = rows.sorted { lhs, rhs in
-            if lhs.isOverdue != rhs.isOverdue { return lhs.isOverdue }
-            return lhs.dayKey < rhs.dayKey
-        }
+        self.rows = rows.sorted { $0.dayKey < $1.dayKey }
         self.nextUp = nextUp
         self.updatedAt = entry.snapshot?.updatedAt
     }
@@ -85,9 +79,7 @@ private struct AgendaPresentation {
         var parts: [String] = []
         switch item.kind {
         case .task:
-            parts.append(row.isOverdue
-                ? String(localized: "Overdue \(dayLabel(forKey: row.dayKey))")
-                : String(localized: "Due \(dayLabel(forKey: row.dayKey))"))
+            parts.append(String(localized: "Due \(dayLabel(forKey: row.dayKey))"))
         case .event:
             parts.append(dayLabel(forKey: row.dayKey))
             if item.allDay {
@@ -349,7 +341,7 @@ private struct AgendaRow: View {
                 }
                 Text(presentation.subtitle(for: row))
                     .font(.system(size: 10))
-                    .foregroundStyle(row.isOverdue ? Color.red : Color.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }

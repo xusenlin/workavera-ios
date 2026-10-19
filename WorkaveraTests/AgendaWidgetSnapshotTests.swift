@@ -46,10 +46,12 @@ final class AgendaWidgetSnapshotTests: XCTestCase {
         XCTAssertTrue(once.allDay)
     }
 
-    func testKeepsOverdueTasksAndDropsTasksBeyondTheWindow() throws {
+    func testKeepsTasksDueWithinTheMonthAndLookahead() throws {
         let tasks = try decode([CalendarTaskDeadline].self, #"""
         [
-          {"id": "overdue", "project": "p1", "title": "Late", "due_date": "2026-10-10 00:00:00.000Z",
+          {"id": "lastMonth", "project": "p1", "title": "Old", "due_date": "2026-08-15 00:00:00.000Z",
+           "expand": {"state": {"category": "active"}}},
+          {"id": "earlier", "project": "p1", "title": "Late", "due_date": "2026-10-10 00:00:00.000Z",
            "priority": "high", "expand": {"project": {"name": "Ops"}, "state": {"category": "active"}}},
           {"id": "soon", "project": "p1", "title": "Soon", "due_date": "2026-10-22 00:00:00.000Z",
            "expand": {"project": {"name": "Ops"}, "state": {"category": "pending"}}},
@@ -60,7 +62,7 @@ final class AgendaWidgetSnapshotTests: XCTestCase {
 
         let snapshot = AgendaWidgetSnapshot(events: [], tasks: tasks, timezone: timezone, now: now)
 
-        XCTAssertEqual(snapshot.items.map(\.id), ["overdue", "soon"])
+        XCTAssertEqual(snapshot.items.map(\.id), ["earlier", "soon"])
         XCTAssertEqual(snapshot.items.first?.detail, "Ops")
         XCTAssertEqual(snapshot.items.first?.tint, "high")
     }

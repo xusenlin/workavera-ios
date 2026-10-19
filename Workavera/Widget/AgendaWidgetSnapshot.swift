@@ -68,6 +68,7 @@ extension AgendaWidgetSnapshot {
         let today = calendar.startOfDay(for: now)
         let monthStart = calendar.dateInterval(of: .month, for: today)?.start ?? today
         let windowEnd = calendar.date(byAdding: .day, value: Self.lookaheadDays, to: today) ?? today
+        let monthStartKey = formatter.string(from: monthStart)
         let windowEndKey = formatter.string(from: windowEnd)
 
         var occurrences: [String: AppEventOccurrence] = [:]
@@ -98,9 +99,8 @@ extension AgendaWidgetSnapshot {
                 tint: occurrence.event.color.rawValue
             )
         }
-        // Overdue tasks stay in the snapshot: they are still open to-dos.
         let taskItems = tasks
-            .filter { !$0.completed && $0.dueDate < windowEndKey }
+            .filter { !$0.completed && $0.dueDate >= monthStartKey && $0.dueDate < windowEndKey }
             .map { task in
                 AgendaWidgetItem(
                     id: task.id,
