@@ -19,6 +19,7 @@ struct WorkaveraApp: App {
     @State private var readingDiscover = ReadingDiscoverStore()
     @State private var chat = ChatStore()
     @State private var support = SupportStore()
+    @State private var requestedSection: AppSection?
 
     var body: some Scene {
         WindowGroup {
@@ -32,7 +33,7 @@ struct WorkaveraApp: App {
                 case .loggedOut:
                     LoginView()
                 case .loggedIn:
-                    RootView()
+                    RootView(requestedSection: $requestedSection)
                 }
             }
             .environment(auth)
@@ -53,6 +54,9 @@ struct WorkaveraApp: App {
             .preferredColorScheme(auth.appearance.colorScheme)
             .task {
                 await support.start()
+            }
+            .onOpenURL { url in
+                requestedSection = AppSection(deepLink: url)
             }
         }
         .onChange(of: scenePhase) { _, phase in

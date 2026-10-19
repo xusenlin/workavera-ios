@@ -37,7 +37,7 @@ final class AgendaWidgetSnapshotTests: XCTestCase {
 
         XCTAssertEqual(
             snapshot.items.map(\.firstDayKey),
-            ["2026-10-07", "2026-10-21", "2026-11-07"]
+            ["2026-10-21", "2026-11-07", "2026-12-07"]
         )
         let once = try XCTUnwrap(snapshot.items.first { $0.title == "Glucose test" })
         XCTAssertEqual(once.dayKeys, ["2026-10-21"])
@@ -46,7 +46,7 @@ final class AgendaWidgetSnapshotTests: XCTestCase {
         XCTAssertTrue(once.allDay)
     }
 
-    func testKeepsTasksDueWithinTheMonthAndLookahead() throws {
+    func testKeepsOnlyTasksDueFromTodayWithinTheLookahead() throws {
         let tasks = try decode([CalendarTaskDeadline].self, #"""
         [
           {"id": "lastMonth", "project": "p1", "title": "Old", "due_date": "2026-08-15 00:00:00.000Z",
@@ -62,9 +62,9 @@ final class AgendaWidgetSnapshotTests: XCTestCase {
 
         let snapshot = AgendaWidgetSnapshot(events: [], tasks: tasks, timezone: timezone, now: now)
 
-        XCTAssertEqual(snapshot.items.map(\.id), ["earlier", "soon"])
+        XCTAssertEqual(snapshot.items.map(\.id), ["soon"])
         XCTAssertEqual(snapshot.items.first?.detail, "Ops")
-        XCTAssertEqual(snapshot.items.first?.tint, "high")
+        XCTAssertEqual(snapshot.items.first?.tint, "none")
     }
 
     func testSameItemsIgnoresFetchTime() {

@@ -3,11 +3,10 @@ import Foundation
 /// A flattened, widget-ready view of Calendar events and Board task deadlines.
 ///
 /// Repeating events are expanded into occurrences ahead of time so the widget
-/// only has to filter by day when it renders. The snapshot covers the current
-/// month plus `lookaheadDays`, which is enough for the month grid, the next
-/// seven days, and a "next up" hint when the week is empty.
+/// only has to filter by day when it renders. The snapshot covers today plus
+/// `lookaheadDays`, which is plenty for the handful of upcoming items shown.
 struct AgendaWidgetSnapshot: Codable, Equatable {
-    static let lookaheadDays = 45
+    static let lookaheadDays = 60
 
     let timezone: String
     let items: [AgendaWidgetItem]
@@ -66,14 +65,13 @@ extension AgendaWidgetSnapshot {
         calendar.timeZone = TimeZone(identifier: timezone) ?? .current
         let formatter = Self.dayFormatter(timeZone: calendar.timeZone)
         let today = calendar.startOfDay(for: now)
-        let monthStart = calendar.dateInterval(of: .month, for: today)?.start ?? today
         let windowEnd = calendar.date(byAdding: .day, value: Self.lookaheadDays, to: today) ?? today
-        let monthStartKey = formatter.string(from: monthStart)
+        let todayKey = formatter.string(from: today)
         let windowEndKey = formatter.string(from: windowEnd)
 
         var occurrences: [String: AppEventOccurrence] = [:]
         var occurrenceDays: [String: [String]] = [:]
-        var day = monthStart
+        var day = today
         while day < windowEnd {
             let key = formatter.string(from: day)
             for event in events {
@@ -100,7 +98,7 @@ extension AgendaWidgetSnapshot {
             )
         }
         let taskItems = tasks
-            .filter { !$0.completed && $0.dueDate >= monthStartKey && $0.dueDate < windowEndKey }
+            .filter { !$0.completed && $0.dueDate >= todayKey && $0.dueDate < windowEndKey }
             .map { task in
                 AgendaWidgetItem(
                     id: task.id,

@@ -12,13 +12,13 @@ Server-side changes are recorded separately, in the
 
 ### Added
 
-- An Agenda home screen widget (medium and large) shows this month's calendar
-  on the left and the next seven days of assigned task deadlines and Calendar
-  events on the right, with a "next up" hint when the week is empty. Editing the widget chooses tasks and events, tasks only, or
-  events only. A refresh button fetches the latest agenda from the server
-  without opening the app; otherwise the widget refreshes every 30 minutes, at
-  midnight, and whenever the Calendar changes in the app. Signing out clears
-  the widget.
+- An Agenda home screen widget (medium and large) lists your next six assigned
+  task deadlines and Calendar events, each marked with its date, in the
+  system language. Editing the widget chooses tasks and events, tasks only, or
+  events only, and tapping it opens Calendar. A refresh button fetches the
+  latest agenda from the server without opening the app; otherwise the widget
+  refreshes every 30 minutes, at midnight, and whenever the Calendar changes in
+  the app. Signing out clears the widget.
 
 ## [1.0.4] - 2026-09-04
 

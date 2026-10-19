@@ -48,7 +48,7 @@ Workavera/
     ├── SettingsView.swift       # Preferences, server information, and account actions
     ├── ServerSettingsSheet.swift # Server address and insecure HTTP acknowledgement
     └── SessionRecoveryView.swift # Retry interface for session recovery failures
-WorkaveraWidget/                 # Agenda widget extension: month grid, next 7 days, refresh button
+WorkaveraWidget/                 # Agenda widget extension: next six items with dates, refresh button
 ```
 
 The app and the widget share the `group.com.xusenlin.workavera.ios` App Group.

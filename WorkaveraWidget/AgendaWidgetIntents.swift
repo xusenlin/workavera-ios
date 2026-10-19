@@ -24,7 +24,7 @@ enum AgendaWidgetContent: String, AppEnum {
 
 struct AgendaWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "Agenda"
-    static var description = IntentDescription("Choose what appears next to the calendar.")
+    static var description = IntentDescription("Choose what the upcoming list shows.")
 
     @Parameter(title: "Show", default: .all)
     var content: AgendaWidgetContent

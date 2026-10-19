@@ -77,4 +77,10 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
             "Your profile, avatar, and status."
         }
     }
+
+    /// Parses `workavera://<section>` links, such as the one the agenda widget opens.
+    init?(deepLink url: URL) {
+        guard url.scheme == "workavera", let host = url.host() else { return nil }
+        self.init(rawValue: host)
+    }
 }

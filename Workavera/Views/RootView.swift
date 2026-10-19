@@ -6,6 +6,8 @@ struct RootView: View {
     @Environment(NotificationStore.self) private var notifications
     @Environment(SupportStore.self) private var support
     @State private var selection: AppSection? = .dashboard
+    /// A section asked for from outside the app, e.g. by tapping the agenda widget.
+    @Binding var requestedSection: AppSection?
 
     var body: some View {
         NavigationSplitView {
@@ -21,6 +23,11 @@ struct RootView: View {
                         }
                     }
             }
+        }
+        .onChange(of: requestedSection, initial: true) { _, section in
+            guard let section else { return }
+            selection = section
+            requestedSection = nil
         }
         .task(id: auth.user?.id) {
             notifications.reset()

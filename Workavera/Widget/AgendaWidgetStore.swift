@@ -10,6 +10,8 @@ import Security
 enum AgendaWidgetStore {
     static let appGroupID = "group.com.xusenlin.workavera.ios"
     static let widgetKind = "WorkaveraAgendaWidget"
+    /// Opened when the widget is tapped; the app maps the host to an `AppSection`.
+    static let calendarURL = URL(string: "workavera://calendar")!
 
     struct Session: Codable, Equatable {
         let baseURL: URL

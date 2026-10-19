@@ -21,7 +21,7 @@ struct AgendaWidget: Widget {
                 }
         }
         .configurationDisplayName("Agenda")
-        .description("This month's calendar with your tasks and events for the next seven days.")
+        .description("Your next six tasks and events, each marked with its date.")
         .supportedFamilies([.systemMedium, .systemLarge])
     }
 }
