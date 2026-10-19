@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WidgetKit
 
 @MainActor
 @Observable
@@ -183,6 +184,7 @@ final class AuthStore {
             user = auth.record
             token = auth.token
             avatarRevision = UUID().uuidString
+            syncWidgetSession()
         } catch let error as APIError where error.isAuthenticationFailure {
             guard user?.id == currentUser.id, token == currentToken else { throw error }
             try? tokenStore.delete(account: tokenAccount)
@@ -1021,6 +1023,21 @@ final class AuthStore {
         restoreCachedPreferences(userID: auth.record.id)
         recoveryMessage = nil
         phase = .loggedIn
+        syncWidgetSession()
+    }
+
+    /// Shares the current session with the agenda widget so it can refresh on its own.
+    private func syncWidgetSession() {
+        guard let user, let token,
+              let configuration = try? ServerConfiguration(
+                  address: serverAddress,
+                  allowInsecureHTTP: allowInsecureHTTP
+              ) else { return }
+        AgendaWidgetStore.saveSession(
+            AgendaWidgetStore.Session(baseURL: configuration.baseURL, userID: user.id),
+            token: token
+        )
+        WidgetCenter.shared.reloadTimelines(ofKind: AgendaWidgetStore.widgetKind)
     }
 
     private func loadPreferences() async {
@@ -1047,6 +1064,8 @@ final class AuthStore {
     }
 
     private func clearSession() {
+        AgendaWidgetStore.clear()
+        WidgetCenter.shared.reloadTimelines(ofKind: AgendaWidgetStore.widgetKind)
         token = nil
         user = nil
         avatarRevision = nil

@@ -1,7 +1,9 @@
 import SwiftUI
+import WidgetKit
 
 @main
 struct WorkaveraApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var auth = AuthStore()
     @State private var notifications = NotificationStore()
     @State private var board = BoardStore()
@@ -51,6 +53,12 @@ struct WorkaveraApp: App {
             .preferredColorScheme(auth.appearance.colorScheme)
             .task {
                 await support.start()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Let the agenda widget pick up anything changed while the app was open.
+            if phase == .background, auth.phase == .loggedIn {
+                WidgetCenter.shared.reloadTimelines(ofKind: AgendaWidgetStore.widgetKind)
             }
         }
     }

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WidgetKit
 
 @MainActor
 @Observable
@@ -61,6 +62,7 @@ final class CalendarStore {
             timezone = snapshot.timezone
             hasLoaded = true
             errorMessage = nil
+            if strategy == .networkOnly { publishWidgetSnapshot() }
         } catch is CancellationError {
             return
         } catch {
@@ -166,6 +168,16 @@ final class CalendarStore {
             events.append(event)
         }
         events.sort { $0.startAt < $1.startAt }
+    }
+
+    /// Hands fresh agenda data to the widget, reloading it only when something changed.
+    private func publishWidgetSnapshot() {
+        let snapshot = AgendaWidgetSnapshot(events: events, tasks: tasks, timezone: timezone)
+        let changed = !snapshot.hasSameItems(as: AgendaWidgetStore.loadSnapshot())
+        AgendaWidgetStore.saveSnapshot(snapshot)
+        if changed {
+            WidgetCenter.shared.reloadTimelines(ofKind: AgendaWidgetStore.widgetKind)
+        }
     }
 
     @discardableResult

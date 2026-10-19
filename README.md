@@ -37,6 +37,7 @@ Workavera/
 ├── Stores/AuthStore.swift       # Authentication, session recovery, and user preferences
 ├── Stores/ChatStore.swift       # Chat pagination, selection, pinning, archiving, and deletion
 ├── Components/                  # Shared avatars, status badges, pagination, and cached UI
+├── Widget/                      # Agenda snapshot and App Group storage shared with the widget
 └── Views/
     ├── AppSection.swift         # App sections, menu labels, icons, and descriptions
     ├── LoginView.swift          # Authentication and server selection
@@ -47,7 +48,12 @@ Workavera/
     ├── SettingsView.swift       # Preferences, server information, and account actions
     ├── ServerSettingsSheet.swift # Server address and insecure HTTP acknowledgement
     └── SessionRecoveryView.swift # Retry interface for session recovery failures
+WorkaveraWidget/                 # Agenda widget extension: month grid, next 7 days, refresh button
 ```
+
+The app and the widget share the `group.com.xusenlin.workavera.ios` App Group.
+The app writes the signed-in server, user, and token there (the token in the
+App Group keychain access group) so the widget can fetch the agenda on its own.
 
 ## Running
 

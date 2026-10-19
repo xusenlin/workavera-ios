@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BB00000000000000000000B1 /* WorkaveraWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB00000000000000000000A4 /* WorkaveraWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		73FC6845300E3334000D5248 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA00000000000000000000E2 /* MarkdownUI */; };
 /* End PBXBuildFile section */
 
@@ -18,12 +19,34 @@
 			remoteGlobalIDString = AA00000000000000000000A5;
 			remoteInfo = Workavera;
 		};
+		BB00000000000000000000CA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA00000000000000000000AA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BB00000000000000000000A5;
+			remoteInfo = WorkaveraWidgetExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		BB00000000000000000000B2 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BB00000000000000000000B1 /* WorkaveraWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		AA00000000000000000000A4 /* Workavera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Workavera.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000C4 /* WorkaveraTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WorkaveraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000F1 /* Workavera.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Workavera.storekit; sourceTree = "<group>"; };
+		BB00000000000000000000A4 /* WorkaveraWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WorkaveraWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -31,8 +54,29 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Workavera.entitlements,
 			);
 			target = AA00000000000000000000A5 /* Workavera */;
+		};
+		BB00000000000000000000AE /* Exceptions for "Workavera" folder in "WorkaveraWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Components/Color+Hex.swift",
+				Models/AppEvent.swift,
+				Models/Board.swift,
+				Models/Docs.swift,
+				Widget/AgendaWidgetSnapshot.swift,
+				Widget/AgendaWidgetStore.swift,
+			);
+			target = BB00000000000000000000A5 /* WorkaveraWidgetExtension */;
+		};
+		BB00000000000000000000AF /* Exceptions for "WorkaveraWidget" folder in "WorkaveraWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				WorkaveraWidget.entitlements,
+			);
+			target = BB00000000000000000000A5 /* WorkaveraWidgetExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -41,6 +85,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				AA00000000000000000000AE /* Exceptions for "Workavera" folder in "Workavera" target */,
+				BB00000000000000000000AE /* Exceptions for "Workavera" folder in "WorkaveraWidgetExtension" target */,
 			);
 			path = Workavera;
 			sourceTree = "<group>";
@@ -48,6 +93,14 @@
 		AA00000000000000000000C1 /* WorkaveraTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = WorkaveraTests;
+			sourceTree = "<group>";
+		};
+		BB00000000000000000000A1 /* WorkaveraWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BB00000000000000000000AF /* Exceptions for "WorkaveraWidget" folder in "WorkaveraWidgetExtension" target */,
+			);
+			path = WorkaveraWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -68,6 +121,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB00000000000000000000A8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -76,6 +136,7 @@
 			children = (
 				AA00000000000000000000A1 /* Workavera */,
 				AA00000000000000000000C1 /* WorkaveraTests */,
+				BB00000000000000000000A1 /* WorkaveraWidget */,
 				AA00000000000000000000F0 /* StoreKit */,
 				AA00000000000000000000A3 /* Products */,
 			);
@@ -86,6 +147,7 @@
 			children = (
 				AA00000000000000000000A4 /* Workavera.app */,
 				AA00000000000000000000C4 /* WorkaveraTests.xctest */,
+				BB00000000000000000000A4 /* WorkaveraWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -108,10 +170,12 @@
 				AA00000000000000000000A7 /* Sources */,
 				AA00000000000000000000A8 /* Frameworks */,
 				AA00000000000000000000A9 /* Resources */,
+				BB00000000000000000000B2 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BB00000000000000000000CB /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				AA00000000000000000000A1 /* Workavera */,
@@ -147,6 +211,28 @@
 			productReference = AA00000000000000000000C4 /* WorkaveraTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		BB00000000000000000000A5 /* WorkaveraWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB00000000000000000000A6 /* Build configuration list for PBXNativeTarget "WorkaveraWidgetExtension" */;
+			buildPhases = (
+				BB00000000000000000000A7 /* Sources */,
+				BB00000000000000000000A8 /* Frameworks */,
+				BB00000000000000000000A9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BB00000000000000000000A1 /* WorkaveraWidget */,
+			);
+			name = WorkaveraWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = WorkaveraWidgetExtension;
+			productReference = BB00000000000000000000A4 /* WorkaveraWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -163,6 +249,9 @@
 					AA00000000000000000000C5 = {
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = AA00000000000000000000A5;
+					};
+					BB00000000000000000000A5 = {
+						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
@@ -185,6 +274,7 @@
 			targets = (
 				AA00000000000000000000A5 /* Workavera */,
 				AA00000000000000000000C5 /* WorkaveraTests */,
+				BB00000000000000000000A5 /* WorkaveraWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -198,6 +288,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AA00000000000000000000C9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB00000000000000000000A9 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -221,6 +318,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB00000000000000000000A7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -228,6 +332,11 @@
 			isa = PBXTargetDependency;
 			target = AA00000000000000000000A5 /* Workavera */;
 			targetProxy = AA00000000000000000000CA /* PBXContainerItemProxy */;
+		};
+		BB00000000000000000000CB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BB00000000000000000000A5 /* WorkaveraWidgetExtension */;
+			targetProxy = BB00000000000000000000CA /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -346,6 +455,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Workavera/Workavera.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 2M7KFL94Z6;
@@ -376,6 +486,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Workavera/Workavera.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 2M7KFL94Z6;
@@ -445,6 +556,58 @@
 			};
 			name = Release;
 		};
+		BB00000000000000000000B3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WorkaveraWidget/WorkaveraWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2M7KFL94Z6;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WorkaveraWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Workavera;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xusenlin.workavera.ios.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BB00000000000000000000B4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = WorkaveraWidget/WorkaveraWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2M7KFL94Z6;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WorkaveraWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Workavera;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.xusenlin.workavera.ios.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -471,6 +634,15 @@
 			buildConfigurations = (
 				AA00000000000000000000D3 /* Debug */,
 				AA00000000000000000000D4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BB00000000000000000000A6 /* Build configuration list for PBXNativeTarget "WorkaveraWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB00000000000000000000B3 /* Debug */,
+				BB00000000000000000000B4 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

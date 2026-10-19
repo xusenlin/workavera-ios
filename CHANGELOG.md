@@ -10,6 +10,17 @@ Server-side changes are recorded separately, in the
 
 ## [Unreleased]
 
+### Added
+
+- An Agenda home screen widget (medium and large) shows this month's calendar
+  on the left and the next seven days of assigned task deadlines and Calendar
+  events on the right, with overdue tasks first and a "next up" hint when the
+  week is empty. Editing the widget chooses tasks and events, tasks only, or
+  events only. A refresh button fetches the latest agenda from the server
+  without opening the app; otherwise the widget refreshes every 30 minutes, at
+  midnight, and whenever the Calendar changes in the app. Signing out clears
+  the widget.
+
 ## [1.0.4] - 2026-09-04
 
 Needs a Workavera server on 0.1.1 or newer: task start dates, public project
